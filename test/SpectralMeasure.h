@@ -11,9 +11,19 @@
 // The FFT is here rather than taken as a dependency because this is TEST code.
 // A library that needed one should adopt PFFFT or KISS -- an FFT has a
 // specification you can fail to meet, and writing one for production is exactly
-// the trade this ecosystem refuses. Forty lines of radix-2 to assert something
-// about a window function is a different matter, and it is checked against a
-// known answer below before anything relies on it.
+// the trade this ecosystem refuses. Twenty-five lines of radix-2 to assert
+// something about a window function is a different matter, and it is checked
+// against both closed-form answers and the definition of the transform itself
+// in SpectralMeasureTests.cpp before anything relies on it.
+//
+// The question was put again -- should this be PFFFT? -- and answered by
+// measurement rather than by the rule. This transform agrees with a naive DFT
+// to 2.1e-12 of the spectral peak at the 32768 the resampler tests use, while
+// the assertions it supports live at 40 to 70 dB, which is 1e-2 to 3e-4. Nine
+// orders of margin: there is no accuracy to buy. PFFFT would also cost some,
+// being single-precision in the form everyone vendors, on top of a real-FFT
+// API with a non-canonical bin order and its own aligned allocator. A test
+// measure is the last place to add a dependency that makes it less exact.
 
 #include <algorithm>
 #include <cmath>
