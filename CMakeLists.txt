@@ -32,7 +32,7 @@ target_include_directories(chalkwalk_tape
 target_include_directories(chalkwalk_tape SYSTEM
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/modules>)
 
-target_compile_features(chalkwalk_tape PUBLIC cxx_std_20)
+target_compile_features(chalkwalk_tape PUBLIC cxx_std_17)
 set_target_properties(chalkwalk_tape PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)

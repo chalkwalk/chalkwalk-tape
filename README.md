@@ -1,7 +1,7 @@
 # chalkwalk-tape
 
 A tape deck as a library: medium, heads, layers, seams and resampling.
-JUCE-free, C++20, MIT.
+JUCE-free, C++17, MIT.
 
 Not a delay line and not a looper — the parts you would build either from.
 Audio crosses the boundary as pointer views over caller-owned channels,
