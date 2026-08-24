@@ -26,9 +26,36 @@ namespace chalkwalk::tape
     class Resampler
     {
     public:
-        static constexpr int kHalf = 8;             // taps either side of the read point
-        static constexpr int kTaps = 2 * kHalf;     // 16-tap kernel
+        // THE KERNEL LENGTH SCALES WITH THE RATE, and that is the point of the
+        // bank rather than an implementation detail.
+        //
+        // A bucket band-limits to Nyquist/maxRate, so its sinc's zeros are
+        // maxRate source samples apart. Representing that in a FIXED sixteen-tap
+        // window means, at maxRate 5.66, holding 1.4 zero crossings -- which is
+        // not a filter. Measured before this changed: a scatter-write at rate
+        // 4.68 rippled by 1.90 dB where a correct interpolating kernel is flat,
+        // and the gather rejected a tone half an octave above what the rate can
+        // carry by 13 dB.
+        //
+        // Rejection and ripple both depend on taps/rate rather than on taps:
+        //
+        //   taps/rate     4        8         12
+        //   rejection   -30 dB   -60/-75   -80/-95
+        //   ripple       0.38     0.006     ~0
+        //
+        // So eight per unit of rate, floored at the original sixteen -- nothing
+        // at or below rate 2 changes at all -- and capped, because past the top
+        // bucket the deposits are further apart than any kernel can bridge and
+        // length stops being the answer.
+        static constexpr int kMinHalf = 8;          // taps either side, to rate 2
+        static constexpr int kMaxHalf = 24;         // the ceiling, at the top bucket
         static constexpr int kPhases = 256;         // sub-sample table resolution
+
+        // Retained for callers that only need a worst-case bound -- EraseHead
+        // sizes its minimum gap from it, and WriteHead commits from it. It is
+        // the LONGEST kernel now rather than the only one.
+        static constexpr int kHalf = kMaxHalf;
+        static constexpr int kTaps = 2 * kHalf;
 
         Resampler() { buildBank(); }
 
@@ -46,6 +73,8 @@ namespace chalkwalk::tape
         struct Kernel
         {
             const float* taps = nullptr;
+            int count = 2 * kMinHalf;   // how many coefficients `taps` holds
+            int half = kMinHalf;        // tap i sits at floor(pos) - (half-1) + i
             float writeGain = 1.0f;
         };
 
@@ -55,7 +84,8 @@ namespace chalkwalk::tape
             int ph = static_cast<int>(frac * kPhases + 0.5);
             if (ph < 0) ph = 0;
             if (ph > kPhases) ph = kPhases;
-            return { b.table.data() + static_cast<std::size_t>(ph) * kTaps,
+            return { b.table.data() + static_cast<std::size_t>(ph) * (2 * b.half),
+                     2 * b.half, b.half,
                      static_cast<float>(std::min(std::abs(rate), b.maxRate)) };
         }
 
@@ -74,11 +104,11 @@ namespace chalkwalk::tape
             if (ph < 0) ph = 0;
             if (ph > kPhases) ph = kPhases;
 
-            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * kTaps;
+            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * (2 * b.half);
             float acc = 0.0f;
-            for (int i = 0; i < kTaps; ++i)
+            for (int i = 0; i < 2 * b.half; ++i)
             {
-                int k = base - (kHalf - 1) + i;
+                int k = base - (b.half - 1) + i;
                 k = k < 0 ? 0 : (k >= srcLen ? srcLen - 1 : k);
                 acc += src[k] * tab[static_cast<std::size_t>(i)];
             }
@@ -102,11 +132,11 @@ namespace chalkwalk::tape
             if (ph < 0) ph = 0;
             if (ph > kPhases) ph = kPhases;
 
-            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * kTaps;
+            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * (2 * b.half);
             float acc = 0.0f;
-            for (int i = 0; i < kTaps; ++i)
+            for (int i = 0; i < 2 * b.half; ++i)
             {
-                int k = (base - (kHalf - 1) + i) % len;
+                int k = (base - (b.half - 1) + i) % len;
                 if (k < 0) k += len;
                 acc += src[k] * tab[static_cast<std::size_t>(i)];
             }
@@ -143,10 +173,10 @@ namespace chalkwalk::tape
             if (ph < 0) ph = 0;
             if (ph > kPhases) ph = kPhases;
 
-            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * kTaps;
-            for (int i = 0; i < kTaps; ++i)
+            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * (2 * b.half);
+            for (int i = 0; i < 2 * b.half; ++i)
             {
-                int k = (base - (kHalf - 1) + i) % len;
+                int k = (base - (b.half - 1) + i) % len;
                 if (k < 0) k += len;
                 dst[k] += in * tab[static_cast<std::size_t>(i)];
             }
@@ -155,8 +185,9 @@ namespace chalkwalk::tape
     private:
         struct Bucket
         {
-            std::vector<float> table;  // (kPhases+1) rows of kTaps, phase-major
+            std::vector<float> table;  // (kPhases+1) rows of 2*half, phase-major
             double maxRate = 1.0;      // serves read rates up to this value
+            int half = kMinHalf;       // taps either side; scales with maxRate
         };
 
         static double sinc(double x) noexcept
@@ -185,18 +216,21 @@ namespace chalkwalk::tape
                 const double fc = 0.5 / mr;  // cutoff in cycles/sample (0.5 = Nyquist)
                 Bucket b;
                 b.maxRate = mr;
-                b.table.resize(static_cast<std::size_t>((kPhases + 1) * kTaps));
+                const int wanted = static_cast<int>(std::ceil(4.0 * mr));
+                b.half = std::min(kMaxHalf, std::max(kMinHalf, wanted));
+                const int taps = 2 * b.half;
+                b.table.resize(static_cast<std::size_t>((kPhases + 1) * taps));
 
+                std::vector<double> row(static_cast<std::size_t>(taps));
                 for (int ph = 0; ph <= kPhases; ++ph)
                 {
                     const double frac = static_cast<double>(ph) / kPhases;
                     double sum = 0.0;
-                    std::array<double, kTaps> row{};
-                    for (int i = 0; i < kTaps; ++i)
+                    for (int i = 0; i < taps; ++i)
                     {
                         // Source offset of tap i from the read point (see read()).
-                        const double t = frac + (kHalf - 1) - i;
-                        const double unit = (t + kHalf) / (2.0 * kHalf);
+                        const double t = frac + (b.half - 1) - i;
+                        const double unit = (t + b.half) / (2.0 * b.half);
                         const double win = (unit >= 0.0 && unit <= 1.0)
                                                ? kaiser(unit) : 0.0;
                         const double h = 2.0 * fc * sinc(2.0 * fc * t) * win;
@@ -205,8 +239,8 @@ namespace chalkwalk::tape
                     }
                     // Normalise the phase to unit DC gain.
                     const double inv = (std::abs(sum) > 1.0e-12) ? 1.0 / sum : 1.0;
-                    float* dst = b.table.data() + static_cast<std::size_t>(ph) * kTaps;
-                    for (int i = 0; i < kTaps; ++i)
+                    float* dst = b.table.data() + static_cast<std::size_t>(ph) * taps;
+                    for (int i = 0; i < taps; ++i)
                         dst[i] = static_cast<float>(row[static_cast<std::size_t>(i)] * inv);
                 }
                 bank_.push_back(std::move(b));

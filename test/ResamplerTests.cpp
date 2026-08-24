@@ -277,3 +277,73 @@ TEST_CASE("resampler") {
                   + std::to_string(held) + ")");
         }
     }
+
+// ── The kernel length follows the rate ───────────────────────────────────────
+//
+// A bucket band-limits to Nyquist/maxRate, so its sinc's zeros are maxRate
+// source samples apart. Held in a FIXED sixteen-tap window that is 1.4 zero
+// crossings at the top bucket, which is not a filter: measured before this
+// changed, a scatter-write at rate 4.68 rippled by 1.90 dB where a correct
+// interpolating kernel is flat, and the gather rejected a tone half an octave
+// above what the rate could carry by only 13 dB.
+//
+// Both faults are a function of taps/rate rather than of taps, so the bank's
+// rows scale with the bucket. These are the two properties that buys.
+TEST_CASE("scatter-write partition of unity, at every rate") {
+    const chalkwalk::tape::Resampler rs;
+
+    // Deposit a CONSTANT and look at what lands. A correct interpolating kernel
+    // sums flat whatever the spacing; a truncated one ripples, and the ripple is
+    // the "written at the edge of the kernel rather than the middle" error.
+    for (const double rate : { 1.0, 2.0, 2.34, 4.0, 4.68, 5.0 }) {
+        const int len = 4096;
+        std::vector<float> medium(static_cast<std::size_t>(len), 0.0f);
+        const int deposits = static_cast<int>(len / rate) - 64;
+        for (int i = 0; i < deposits; ++i)
+            rs.scatterAddCircular(medium.data(), len, 64.0 + i * rate, rate, 1.0f);
+
+        float lo = 1.0e30f, hi = -1.0e30f;
+        for (int i = len / 3; i < len / 3 + 512; ++i) {
+            lo = std::min(lo, medium[static_cast<std::size_t>(i)]);
+            hi = std::max(hi, medium[static_cast<std::size_t>(i)]);
+        }
+        const double rippleDb = 20.0 * std::log10(static_cast<double>(hi / lo));
+        INFO("rate " << rate << ": ripple " << rippleDb << " dB");
+        // Flat to a hundredth of a decibel. The fixed-length kernel gave 1.90 dB
+        // at 4.68, so this fails loudly if the length stops following the rate.
+        CHECK(rippleDb < 0.05);
+    }
+}
+
+TEST_CASE("the gather rejects what the rate cannot carry") {
+    const chalkwalk::tape::Resampler rs;
+
+    // A source tone half an octave above what the read rate can carry. Reading
+    // at `rate`, source content above 0.5/rate folds into the output; this one
+    // sits at 0.75/rate, so it lands at three quarters of the output rate and
+    // folds to a quarter of it. It should not survive.
+    for (const double rate : { 2.34, 4.68 }) {
+        const int frames = 8000;
+        // Long enough that the read never reaches the ends: read() CLAMPS at the
+        // buffer edges, so running off one turns the tail into held DC and the
+        // measurement reports that instead of the filter. It read -8 dB where
+        // the answer is -58 until this was sized from the rate.
+        const int len = static_cast<int>(2000.0 + frames * rate) + 256;
+        std::vector<float> src(static_cast<std::size_t>(len));
+        const double srcHz = 0.75 / rate;   // cycles per source sample
+        for (int i = 0; i < len; ++i)
+            src[static_cast<std::size_t>(i)] =
+                static_cast<float>(std::sin(2.0 * kPi * srcHz * i));
+
+        double acc = 0.0;
+        for (int i = 0; i < frames; ++i) {
+            const double v = rs.read(src.data(), len, 1000.0 + i * rate, rate);
+            acc += v * v;
+        }
+        const double level = std::sqrt(acc / frames) * std::sqrt(2.0);
+        const double rejectionDb = 20.0 * std::log10(std::max(level, 1.0e-12));
+        INFO("rate " << rate << ": " << rejectionDb << " dB survives");
+        // Was -33 dB at 2.34 and -13 at 4.68 with a fixed sixteen taps.
+        CHECK(rejectionDb < -45.0);
+    }
+}

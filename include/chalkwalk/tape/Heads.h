@@ -123,9 +123,9 @@ namespace chalkwalk::tape
             for (int ch = 0; ch < chans; ++ch)
             {
                 float acc = 0.0f;
-                for (int i = 0; i < Resampler::kTaps; ++i)
+                for (int i = 0; i < k.count; ++i)
                 {
-                    const std::int64_t idx = base - (Resampler::kHalf - 1) + i;
+                    const std::int64_t idx = base - (k.half - 1) + i;
                     acc += m.read(sub, ch, idx) * k.taps[static_cast<std::size_t>(i)];
                 }
                 out[ch] = acc;
@@ -168,9 +168,9 @@ namespace chalkwalk::tape
             for (int ch = 0; ch < chans; ++ch)
             {
                 const float v = in[ch] * k.writeGain;
-                for (int i = 0; i < Resampler::kTaps; ++i)
+                for (int i = 0; i < k.count; ++i)
                 {
-                    const std::int64_t idx = base - (Resampler::kHalf - 1) + i;
+                    const std::int64_t idx = base - (k.half - 1) + i;
                     m.add(sub, ch, idx, v * k.taps[static_cast<std::size_t>(i)]);
                 }
             }
