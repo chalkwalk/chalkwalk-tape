@@ -405,45 +405,52 @@ TEST_CASE("the bank reaches rate 32, and shuttle rates are no longer clamped") {
           == rs.read(probe.data(), 2048, 700.37, 1000.0));
 }
 
-TEST_CASE("extending the bank changed nothing at or below the old top") {
-    // THE COMPATIBILITY CLAIM, and the reason it is safe to extend a shared
-    // bank at all. Buckets are chosen by `r <= b.maxRate` against a list that
-    // was appended to, so every rate the old bank served still selects the same
-    // bucket with the same half and the same cutoff. Anything that moved here
-    // would be a silent change to pitch-up in every consumer of this library.
+TEST_CASE("the kernel length follows the rate, at kTapsPerRate") {
+    // THE INVARIANT THE BANK EXISTS TO HOLD. Rejection and ripple depend on
+    // taps/rate rather than on taps, so every bucket gets kTapsPerRate taps per
+    // unit of the rate it serves, floored at the original sixteen.
+    //
+    // This replaces a test that asserted the halves were unchanged from the
+    // eight-taps-per-rate bank. That claim was true when the only change was
+    // ADDING buckets; raising kTapsPerRate to 12 deliberately changes all of
+    // them, so asserting the old numbers would have been asserting the old
+    // decision.
     const chalkwalk::tape::Resampler rs;
 
-    std::vector<float> src(4096);
-    for (std::size_t i = 0; i < src.size(); ++i)
-        src[i] = static_cast<float>(std::sin(0.21 * static_cast<double>(i))
-                                    + 0.3 * std::cos(0.77 * static_cast<double>(i)));
-
-    // The halves the first six buckets had before the extension.
-    const struct { double rate; int half; } kOld[] = {
-        { 0.5, 8 }, { 1.0, 8 }, { 1.2, 8 }, { 2.0, 8 },
-        { 2.5, 12 }, { 2.82842712, 12 }, { 3.5, 16 }, { 4.0, 16 },
-        { 4.68, 23 }, { 5.65685425, 23 },
-    };
-    for (const auto& c : kOld) {
-        INFO("rate " << c.rate);
-        CHECK(rs.halfFor(c.rate) == c.half);
+    constexpr double perRate = chalkwalk::tape::Resampler::kTapsPerRate;
+    for (const double rate : { 0.5, 1.0, 1.2, 2.0, 2.82842712, 4.0,
+                               5.65685425, 8.0, 16.0, 32.0 }) {
+        const int half = rs.halfFor(rate);
+        INFO("rate " << rate << " -> half " << half);
+        // The bucket serving `rate` has maxRate >= rate, so its half is at
+        // least what `rate` itself demands, and never more than the next
+        // half-octave up demands.
+        CHECK(half >= chalkwalk::tape::Resampler::kMinHalf);
+        CHECK(2 * half >= static_cast<int>(perRate * rate) - 1);
+        // The upper bound has to admit the FLOOR: at rate 0.5 the kernel is
+        // sixteen taps because kMinHalf says so, not because the rate asked.
+        CHECK(2 * half <= std::max(2 * chalkwalk::tape::Resampler::kMinHalf,
+                                   static_cast<int>(perRate * rate * 1.4143) + 4));
     }
 
-    // And the kernel length still follows the rate at eight taps per unit,
-    // floored at sixteen -- the property the bank exists to hold.
-    for (const double rate : { 8.0, 11.3137085, 16.0, 22.627417, 32.0 }) {
-        INFO("rate " << rate);
-        CHECK(rs.halfFor(rate) == static_cast<int>(std::ceil(4.0 * rate)));
-        CHECK(2 * rs.halfFor(rate) >= static_cast<int>(8.0 * rate));
-    }
+    // The floor really is a floor: nothing below rate 1.33 is shortened by it.
+    CHECK(rs.halfFor(0.25) == chalkwalk::tape::Resampler::kMinHalf);
+    CHECK(rs.halfFor(1.0) == chalkwalk::tape::Resampler::kMinHalf);
+
+    // And the ceiling is not binding at the top bucket, which it would be if
+    // kTapsPerRate rose again without kMaxHalf following.
+    CHECK(rs.halfFor(chalkwalk::tape::Resampler::kTopRate)
+          < chalkwalk::tape::Resampler::kMaxHalf + 1);
+    CHECK(rs.halfFor(chalkwalk::tape::Resampler::kTopRate)
+          == static_cast<int>(std::ceil(perRate * 0.5
+                                        * chalkwalk::tape::Resampler::kTopRate)));
 }
 
-
-TEST_CASE("worst-case rejection is at the TOP of a bucket, and is -28 dB") {
-    // A PRE-EXISTING PROPERTY, found while extending the bank and pinned here
-    // because it was not written down anywhere and the comment above implies
-    // better. It is not a consequence of the extension: it holds identically at
-    // every bucket, including the ones that have been there all along.
+TEST_CASE("worst-case rejection is at the TOP of a bucket, and is -49 dB") {
+    // WHERE THE BANK IS WEAKEST, pinned because it was not written down and was
+    // -28 dB until kTapsPerRate went from 8 to 12. It is not a consequence of
+    // extending the bank: it holds identically at every bucket, including the
+    // ones that have been there all along.
     //
     // A bucket band-limits to Nyquist/maxRate, and the probe tone sits at
     // 0.75/rate. When `rate == maxRate` the tone is 1.5x the cutoff -- which is
@@ -453,12 +460,10 @@ TEST_CASE("worst-case rejection is at the TOP of a bucket, and is -28 dB") {
     // barely exists and what saves the common case is having margin below the
     // bucket top rather than the filter's own rolloff.
     //
-    // Half-octave spacing puts every rate in [0.707, 1.0] of its bucket, so
-    // -28 dB is the bank's genuine worst case. Fixing it means either a guard
-    // factor on the cutoff (trading passband) or roughly twice the taps per unit
-    // of rate (trading memory and cycles). That is a policy change for every
-    // consumer of this library and is deliberately NOT bundled with extending
-    // the bank.
+    // Half-octave spacing puts every rate in [0.707, 1.0] of its bucket, so the
+    // top is always reachable and this IS the bank's worst case. Twelve taps per
+    // unit of rate takes it to -49; the cutoff guard was the alternative and
+    // lost on rejection, passband and transient peak at once (kCutoffGuard).
     const chalkwalk::tape::Resampler rs;
 
     const auto survivingDb = [&rs](double rate) {
@@ -481,9 +486,9 @@ TEST_CASE("worst-case rejection is at the TOP of a bucket, and is -28 dB") {
     // ever diverge, the cutoff has stopped being a pure function of maxRate.
     for (const double bucket : { 2.82842712, 5.65685425, 32.0 }) {
         INFO("bucket " << bucket);
-        CHECK(survivingDb(bucket * 0.72) < -100.0);   // bottom: excellent
-        CHECK(survivingDb(bucket * 0.90) < -60.0);    // middle
-        CHECK(survivingDb(bucket) < -40.0);           // top: still the worst case
+        CHECK(survivingDb(bucket * 0.72) < -120.0);   // bottom: excellent
+        CHECK(survivingDb(bucket * 0.90) < -80.0);    // middle
+        CHECK(survivingDb(bucket) < -45.0);           // top: still the worst case
     }
 }
 

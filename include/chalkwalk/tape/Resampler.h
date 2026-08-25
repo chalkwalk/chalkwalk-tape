@@ -43,8 +43,20 @@ namespace chalkwalk::tape
         //   rejection   -30 dB   -60/-75   -80/-95
         //   ripple       0.38     0.006     ~0
         //
-        // So eight per unit of rate, floored at the original sixteen -- nothing
-        // at or below rate 2 changes at all.
+        // TWELVE per unit of rate, floored at the original sixteen taps.
+        //
+        // It was eight, which is the last row of the table above and which put
+        // the bank's worst-case rejection at -28 dB: at eight, a bucket's
+        // transition is more than twice its passband, so the stopband barely
+        // exists and everything rests on a rate having margin below its bucket's
+        // top. Twelve makes the transition narrower than the passband, and the
+        // stopband becomes real.
+        //
+        //   taps/rate     8      10      12      16
+        //   worst rej   -27.5   -37.0   -49.3   -89.4
+        //
+        // Sixteen is another 40 dB and is not taken: it doubles the multiplies
+        // against a floor already well under the medium's own noise.
         //
         // THE BANK REACHES RATE 32, and used to stop at 5.66. What made that a
         // problem is how `bucketFor` behaves past the end: it clamps to the last
@@ -60,7 +72,7 @@ namespace chalkwalk::tape
         // and storing a band-limited half-rate copy is cheaper than bridging the
         // gap at read time, every time.
         static constexpr int kMinHalf = 8;          // taps either side, to rate 2
-        static constexpr int kMaxHalf = 128;        // the ceiling, at the top bucket
+        static constexpr int kMaxHalf = 192;        // the ceiling, at the top bucket
         static constexpr int kPhases = 256;         // sub-sample table resolution
 
         // THE CUTOFF GUARD: how far below a bucket's fold its cutoff is placed.
@@ -76,49 +88,42 @@ namespace chalkwalk::tape
         // worst case, at every bucket, for as long as the bank has existed.
         //
         // The guard moves the cutoff down by this factor, buying rejection with
-        // passband. MEASURED, at 8 taps per unit of rate:
+        // passband. MEASURED, at eight taps per unit of rate:
         //
         //   guard        1.00    1.15    1.20    1.25    1.35    1.50
         //   worst rej   -27.5   -37.5   -40.7   -43.9   -50.2   -59.3
         //   worst bw    0.707   0.615   0.589   0.566   0.524   0.471
         //
         // where `worst bw` is the output cutoff as a fraction of the output
-        // Nyquist, at the bottom of a bucket. 1.25 takes the worst case from
-        // -27.5 to -43.9 dB at no cost in memory or cycles, and the bandwidth it
-        // spends is the top third of an octave below Nyquist -- against aliasing
-        // at -28 dB, which is inharmonic and plainly audible, that is the better
-        // side of the trade on any material.
+        // Nyquist, at the bottom of a bucket.
         //
-        // MORE TAPS IS THE STRONGER LEVER AND IS NOT TAKEN HERE. Measured the
-        // same way, at guard 1.00:
+        // IT IS OFF, because more taps beats it on every axis but cost. Measured
+        // against each other, from a bank at eight taps per unit of rate:
         //
-        //   taps/rate     8      10      12      16
-        //   worst rej   -27.5   -37.0   -49.3   -89.4
-        //   worst bw    0.707   0.707   0.707   0.707      (unchanged)
-        //   table        875    1086    1293    1723  kB
+        //                      worst rej  worst bw  peak@rate2  table
+        //   guard 1.25            -43.9     0.566      0.640    875 kB
+        //   taps/rate 12          -49.3     0.707      0.890   1293 kB
         //
-        // Twelve taps per unit of rate beats guard 1.25 on rejection AND keeps
-        // the whole passband, for 418 kB and half again as many multiplies per
-        // sample. The two compose: 12 taps with a 1.15 guard measures -77.6 dB.
+        // The third column is an impulse written and read at rate 2: a narrower
+        // cutoff spreads a transient, so the guard costs 2.3 dB of peak where
+        // more taps GAINS half a decibel over the original. On a tape echo at
+        // varispeed that is the difference a listener would name.
         //
-        // AND IT WINS ON A THIRD AXIS. A narrower cutoff spreads a transient, so
-        // the peak an impulse comes back at falls. Written and read at rate 2:
+        // So the guard is kept, documented and set to 1.0. It composes with the
+        // taps if rejection is ever wanted below what twelve gives -- twelve
+        // taps with a 1.15 guard measured -77.6 dB -- and it costs nothing at
+        // run time to have available and unused.
         //
-        //   guard 1.00, 8 taps/rate   0.836
-        //   guard 1.25, 8 taps/rate   0.640      <- what is in force here
-        //   guard 1.00, 12 taps/rate  0.890
-        //
-        // 2.3 dB of transient peak, which a tape echo running at varispeed will
-        // show as softened repeats -- and which is the library's own echo test
-        // reading 0.64 where it used to read 0.84.
-        //
-        // SO THE GUARD IS THE WEAKER LEVER ON EVERY AXIS BUT ONE: it is free at
-        // run time and more taps are not. The tap loop is on the audio thread
-        // and a fifty per cent rise there is a budget decision for the consumers
-        // of this library rather than a free win, so the choice is theirs and
-        // these numbers are here so it can be made from them rather than
-        // re-derived. Switching is one constant.
-        static constexpr double kCutoffGuard = 1.25;
+        // WHEREVER IT IS SET, IT MUST NOT REACH THE UNITY BUCKET. Guarding
+        // everywhere made the rate-1 kernel a lowpass instead of a delta, so a
+        // unity write stopped depositing its sample exactly and a unity round
+        // trip stopped being transparent; the scatter's bit-exact test and the
+        // echo tests both caught it. At or below rate 1 the read interpolates
+        // rather than decimating, so nothing folds and band-limiting is loss.
+        static constexpr double kCutoffGuard = 1.0;   // OFF -- see above
+
+        // Taps per unit of rate. The lever the guard lost to.
+        static constexpr double kTapsPerRate = 12.0;
 
         // The highest rate the bank band-limits CORRECTLY. Above it `bucketFor`
         // clamps and the anti-aliasing stops improving, so a caller that can
@@ -346,7 +351,7 @@ namespace chalkwalk::tape
                 const double fc = 0.5 / (mr * guard);
                 Bucket b;
                 b.maxRate = mr;
-                const int wanted = static_cast<int>(std::ceil(4.0 * mr));
+                const int wanted = static_cast<int>(std::ceil(kTapsPerRate * 0.5 * mr));
                 b.half = std::min(kMaxHalf, std::max(kMinHalf, wanted));
                 const int taps = 2 * b.half;
                 b.table.resize(static_cast<std::size_t>((kPhases + 1) * taps));

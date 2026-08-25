@@ -287,13 +287,11 @@ TEST_CASE("heads") {
                 const auto [p2, at2] = peakNear(out, kD, 24);
                 CHECK_MSG(std::abs(at1 - kD / 2) <= 3 && std::abs(at2 - kD) <= 3,
                       "at 2x the echoes land at D/2, D — varispeed sweeps the head spacing");
-                // 0.6, not the 0.7 this asked for before the cutoff guard.
-                // THE GUARD'S COST, MEASURED HERE RATHER THAN HIDDEN: a narrower
-                // cutoff spreads a transient, so an impulse comes back at a
-                // lower peak -- 0.64 against 0.84 at guard 1.00, which is 2.3 dB
-                // of transient level on a varispeed echo. Raising taps per unit
-                // of rate instead would read 0.89. See Resampler::kCutoffGuard.
-                CHECK_MSG(p1 > 0.6f, "the echo survives the faster tape");
+                // Back to 0.7, with margin it did not have before: twelve taps
+                // per unit of rate reads 0.89 here, against 0.84 at eight and
+                // 0.64 under the cutoff guard that was tried instead. A longer
+                // kernel holds a transient where a narrower cutoff spreads it.
+                CHECK_MSG(p1 > 0.7f, "the echo survives the faster tape");
                 CHECK_MSG(std::abs(p2 - kFb * p1) < 0.08f, "regeneration still geometric at 2x");
             }
 
