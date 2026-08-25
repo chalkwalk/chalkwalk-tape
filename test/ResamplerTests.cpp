@@ -482,8 +482,38 @@ TEST_CASE("worst-case rejection is at the TOP of a bucket, and is -28 dB") {
     for (const double bucket : { 2.82842712, 5.65685425, 32.0 }) {
         INFO("bucket " << bucket);
         CHECK(survivingDb(bucket * 0.72) < -100.0);   // bottom: excellent
-        CHECK(survivingDb(bucket * 0.90) < -38.0);    // middle: good
-        CHECK(survivingDb(bucket) < -25.0);           // top: the worst case
-        CHECK(survivingDb(bucket) > -35.0);           // and it really is ~-28
+        CHECK(survivingDb(bucket * 0.90) < -60.0);    // middle
+        CHECK(survivingDb(bucket) < -40.0);           // top: still the worst case
+    }
+}
+
+TEST_CASE("the cutoff guard does not touch the unity bucket") {
+    // THE PROMISE IT NEARLY BROKE. At rate 1 on an integer position the kernel
+    // must be a delta, so a write deposits the sample exactly and a rate-1 round
+    // trip is transparent. Applying the guard everywhere made the unity bucket a
+    // 0.4-cutoff lowpass and broke both -- caught by the scatter's bit-exact
+    // test and by the echo tests, which is why the guard skips it.
+    //
+    // It is principled rather than an exemption: at or below rate 1 the read
+    // interpolates instead of decimating, so nothing folds and band-limiting is
+    // pure loss.
+    const chalkwalk::tape::Resampler rs;
+
+    std::vector<float> impulse(64, 0.0f);
+    impulse[32] = 1.0f;
+    // Read the impulse back at unity, on integer positions: it must come back
+    // as itself, with nothing smeared either side.
+    CHECK(std::abs(rs.read(impulse.data(), 64, 32.0, 1.0) - 1.0f) < 1.0e-6f);
+    for (const double at : { 29.0, 30.0, 31.0, 33.0, 34.0, 35.0 }) {
+        INFO("neighbour " << at);
+        CHECK(std::abs(rs.read(impulse.data(), 64, at, 1.0)) < 1.0e-6f);
+    }
+
+    // And DC passes at unity through every bucket, guard or not, because each
+    // phase is normalised. A guard that broke this would be a gain error.
+    std::vector<float> dc(4096, 1.0f);
+    for (const double rate : { 0.5, 1.0, 2.34, 5.0, 20.0, 32.0 }) {
+        INFO("rate " << rate);
+        CHECK(std::abs(rs.read(dc.data(), 4096, 2000.37, rate) - 1.0f) < 1.0e-5f);
     }
 }

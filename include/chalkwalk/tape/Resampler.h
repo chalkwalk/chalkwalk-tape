@@ -63,6 +63,63 @@ namespace chalkwalk::tape
         static constexpr int kMaxHalf = 128;        // the ceiling, at the top bucket
         static constexpr int kPhases = 256;         // sub-sample table resolution
 
+        // THE CUTOFF GUARD: how far below a bucket's fold its cutoff is placed.
+        //
+        // Without it the worst case is -28 dB and it happens at the TOP of every
+        // bucket. A bucket cuts at Nyquist/maxRate, which for a rate AT its
+        // maxRate is exactly the fold -- so half the transition sits above the
+        // fold and folds back. Since a Kaiser of bandwidth 9 over 8*maxRate taps
+        // has a transition 1.125/maxRate wide against a 0.5/maxRate passband,
+        // the transition is more than twice the passband and the stopband barely
+        // exists. Half-octave spacing puts every rate in [0.707, 1] of its
+        // bucket, so the top is always reachable and -28 dB was the bank's real
+        // worst case, at every bucket, for as long as the bank has existed.
+        //
+        // The guard moves the cutoff down by this factor, buying rejection with
+        // passband. MEASURED, at 8 taps per unit of rate:
+        //
+        //   guard        1.00    1.15    1.20    1.25    1.35    1.50
+        //   worst rej   -27.5   -37.5   -40.7   -43.9   -50.2   -59.3
+        //   worst bw    0.707   0.615   0.589   0.566   0.524   0.471
+        //
+        // where `worst bw` is the output cutoff as a fraction of the output
+        // Nyquist, at the bottom of a bucket. 1.25 takes the worst case from
+        // -27.5 to -43.9 dB at no cost in memory or cycles, and the bandwidth it
+        // spends is the top third of an octave below Nyquist -- against aliasing
+        // at -28 dB, which is inharmonic and plainly audible, that is the better
+        // side of the trade on any material.
+        //
+        // MORE TAPS IS THE STRONGER LEVER AND IS NOT TAKEN HERE. Measured the
+        // same way, at guard 1.00:
+        //
+        //   taps/rate     8      10      12      16
+        //   worst rej   -27.5   -37.0   -49.3   -89.4
+        //   worst bw    0.707   0.707   0.707   0.707      (unchanged)
+        //   table        875    1086    1293    1723  kB
+        //
+        // Twelve taps per unit of rate beats guard 1.25 on rejection AND keeps
+        // the whole passband, for 418 kB and half again as many multiplies per
+        // sample. The two compose: 12 taps with a 1.15 guard measures -77.6 dB.
+        //
+        // AND IT WINS ON A THIRD AXIS. A narrower cutoff spreads a transient, so
+        // the peak an impulse comes back at falls. Written and read at rate 2:
+        //
+        //   guard 1.00, 8 taps/rate   0.836
+        //   guard 1.25, 8 taps/rate   0.640      <- what is in force here
+        //   guard 1.00, 12 taps/rate  0.890
+        //
+        // 2.3 dB of transient peak, which a tape echo running at varispeed will
+        // show as softened repeats -- and which is the library's own echo test
+        // reading 0.64 where it used to read 0.84.
+        //
+        // SO THE GUARD IS THE WEAKER LEVER ON EVERY AXIS BUT ONE: it is free at
+        // run time and more taps are not. The tap loop is on the audio thread
+        // and a fifty per cent rise there is a budget decision for the consumers
+        // of this library rather than a free win, so the choice is theirs and
+        // these numbers are here so it can be made from them rather than
+        // re-derived. Switching is one constant.
+        static constexpr double kCutoffGuard = 1.25;
+
         // The highest rate the bank band-limits CORRECTLY. Above it `bucketFor`
         // clamps and the anti-aliasing stops improving, so a caller that can
         // decimate its source should do so to get back under this.
@@ -86,6 +143,17 @@ namespace chalkwalk::tape
         static constexpr int kTaps = 2 * kHalf;
 
         Resampler() { buildBank(); }
+
+        // How much the polyphase tables cost, in bytes. Stated rather than
+        // guessed: the bank's size is a real trade against its quality, and the
+        // tables in kCutoffGuard's comment are only auditable if this is here.
+        [[nodiscard]] std::size_t tableBytes() const noexcept
+        {
+            std::size_t n = 0;
+            for (const auto& b : bank_)
+                n += b.table.size() * sizeof(float);
+            return n;
+        }
 
         // The kernel itself, for callers whose samples are not a flat `const
         // float*` — a Medium is depth-erased and its indices wrap, so the heads
@@ -262,7 +330,20 @@ namespace chalkwalk::tape
             bank_.reserve(kMaxRates.size());
             for (const double mr : kMaxRates)
             {
-                const double fc = 0.5 / mr;  // cutoff in cycles/sample (0.5 = Nyquist)
+                // Cutoff in cycles/sample; 0.5 is Nyquist. The guard puts it
+                // BELOW the fold so the transition lands in the stopband rather
+                // than straddling it -- see kCutoffGuard.
+                //
+                // NOT ON THE UNITY BUCKET. At or below rate 1 the read is
+                // interpolating, not decimating: nothing folds, so band-limiting
+                // is pure loss. And the unity kernel must stay a DELTA at an
+                // integer position, which is the library's promise that a
+                // rate-1 write deposits the sample exactly and a rate-1 round
+                // trip is transparent. Guarding it broke both the scatter's
+                // bit-exact delta and the echo tests, which is how this arm
+                // arrived.
+                const double guard = (mr > 1.0) ? kCutoffGuard : 1.0;
+                const double fc = 0.5 / (mr * guard);
                 Bucket b;
                 b.maxRate = mr;
                 const int wanted = static_cast<int>(std::ceil(4.0 * mr));
