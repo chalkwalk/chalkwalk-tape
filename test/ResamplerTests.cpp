@@ -522,3 +522,41 @@ TEST_CASE("the cutoff guard does not touch the unity bucket") {
         CHECK(std::abs(rs.read(dc.data(), 4096, 2000.37, rate) - 1.0f) < 1.0e-5f);
     }
 }
+
+TEST_CASE("the bank's two levers are constructible, and pull against each other") {
+    // They exist as constructor parameters so the trade can be rendered and
+    // heard from one binary. This asserts they actually reach the bank -- a
+    // parameter that was accepted and ignored would leave every comparison
+    // showing no difference, which reads as "the change does nothing" rather
+    // than as a bug.
+    using R = chalkwalk::tape::Resampler;
+
+    const R shipped;
+    CHECK(shipped.tapsPerRate() == R::kTapsPerRate);
+    CHECK(shipped.cutoffGuard() == R::kCutoffGuard);
+
+    // More taps per rate is a longer kernel, at every bucket above the floor.
+    const R lean(8.0, 1.0);
+    const R rich(16.0, 1.0);
+    CHECK(lean.halfFor(4.0) < shipped.halfFor(4.0));
+    CHECK(shipped.halfFor(4.0) < rich.halfFor(4.0));
+
+    // The guard does NOT change the length -- it moves the cutoff. Same taps,
+    // different coefficients: that is the whole distinction between the levers.
+    const R guarded(R::kTapsPerRate, 1.3);
+    CHECK(guarded.halfFor(4.0) == shipped.halfFor(4.0));
+
+    std::vector<float> src(4096);
+    for (std::size_t i = 0; i < src.size(); ++i)
+        src[i] = static_cast<float>(std::sin(0.29 * static_cast<double>(i)));
+    CHECK(guarded.read(src.data(), 4096, 2000.37, 4.0)
+          != shipped.read(src.data(), 4096, 2000.37, 4.0));
+
+    // And neither lever touches unity: the delta survives both.
+    std::vector<float> impulse(64, 0.0f);
+    impulse[32] = 1.0f;
+    for (const R* r : { &lean, &rich, &guarded }) {
+        CHECK(std::abs(r->read(impulse.data(), 64, 32.0, 1.0) - 1.0f) < 1.0e-6f);
+        CHECK(std::abs(r->read(impulse.data(), 64, 31.0, 1.0)) < 1.0e-6f);
+    }
+}

@@ -97,30 +97,35 @@ namespace chalkwalk::tape
         // where `worst bw` is the output cutoff as a fraction of the output
         // Nyquist, at the bottom of a bucket.
         //
-        // IT IS OFF, because more taps beats it on every axis but cost. Measured
-        // against each other, from a bank at eight taps per unit of rate:
+        // 1.15 ALONGSIDE TWELVE TAPS, because the two levers act on different
+        // parts of the band and neither is sufficient alone. The guard puts
+        // content NEAR the fold deeper into the stopband; more taps sharpen the
+        // transition around a cutoff that still sits AT the fold, which helps
+        // content FAR above it. Measured together:
         //
-        //                      worst rej  worst bw  peak@rate2  table
-        //   guard 1.25            -43.9     0.566      0.640    875 kB
-        //   taps/rate 12          -49.3     0.707      0.890   1293 kB
+        //                        tone worst  music 12x   bw    peak@rate2
+        //   8 taps                  -27.5      -57.9    0.707    0.836
+        //   8 taps + guard 1.25     -43.9      -67.6    0.566    0.640
+        //   12 taps                 -49.3      -62.8    0.707    0.890
+        //   12 taps + guard 1.15    -77.6      -73.6    0.615    0.760
         //
-        // The third column is an impulse written and read at rate 2: a narrower
-        // cutoff spreads a transient, so the guard costs 2.3 dB of peak where
-        // more taps GAINS half a decibel over the original. On a tape echo at
-        // varispeed that is the difference a listener would name.
+        // `music 12x` is broadband alias-to-signal through a tape medium at
+        // twelve times play speed; `tone worst` is a sinusoid half an octave
+        // above what the rate carries, which sits FAR above the fold and
+        // therefore flatters the taps. Real material sits on the fold, so both
+        // columns are needed to choose and either alone misleads.
         //
-        // So the guard is kept, documented and set to 1.0. It composes with the
-        // taps if rejection is ever wanted below what twelve gives -- twelve
-        // taps with a 1.15 guard measured -77.6 dB -- and it costs nothing at
-        // run time to have available and unused.
-        //
+        // The last row is best on both and costs 0.8 dB of transient peak
+        // against the eight-tap original -- against the guard's 2.3 dB alone.
+        // That is the number a listener could name, on a tape echo running at
+        // varispeed, and it is what `RemanenceBench kernel` renders.
         // WHEREVER IT IS SET, IT MUST NOT REACH THE UNITY BUCKET. Guarding
         // everywhere made the rate-1 kernel a lowpass instead of a delta, so a
         // unity write stopped depositing its sample exactly and a unity round
         // trip stopped being transparent; the scatter's bit-exact test and the
         // echo tests both caught it. At or below rate 1 the read interpolates
         // rather than decimating, so nothing folds and band-limiting is loss.
-        static constexpr double kCutoffGuard = 1.0;   // OFF -- see above
+        static constexpr double kCutoffGuard = 1.15;
 
         // Taps per unit of rate. The lever the guard lost to.
         static constexpr double kTapsPerRate = 12.0;
@@ -147,7 +152,22 @@ namespace chalkwalk::tape
         static constexpr int kHalf = kMaxHalf;
         static constexpr int kTaps = 2 * kHalf;
 
-        Resampler() { buildBank(); }
+        // The defaults are the shipped bank. The parameters exist so the trade
+        // between them can be RENDERED AND HEARD from one binary rather than
+        // rebuilt four times -- they are the two levers on the bank's alias
+        // floor, they pull against each other, and a listening test that has to
+        // recompile the library between takes does not get run.
+        //
+        // Nothing on the audio path reads them: they are consumed once, here.
+        explicit Resampler(double tapsPerRate = kTapsPerRate,
+                           double cutoffGuard = kCutoffGuard)
+            : tapsPerRate_(tapsPerRate), cutoffGuard_(cutoffGuard)
+        {
+            buildBank();
+        }
+
+        [[nodiscard]] double tapsPerRate() const noexcept { return tapsPerRate_; }
+        [[nodiscard]] double cutoffGuard() const noexcept { return cutoffGuard_; }
 
         // How much the polyphase tables cost, in bytes. Stated rather than
         // guessed: the bank's size is a real trade against its quality, and the
@@ -347,11 +367,11 @@ namespace chalkwalk::tape
                 // trip is transparent. Guarding it broke both the scatter's
                 // bit-exact delta and the echo tests, which is how this arm
                 // arrived.
-                const double guard = (mr > 1.0) ? kCutoffGuard : 1.0;
+                const double guard = (mr > 1.0) ? cutoffGuard_ : 1.0;
                 const double fc = 0.5 / (mr * guard);
                 Bucket b;
                 b.maxRate = mr;
-                const int wanted = static_cast<int>(std::ceil(kTapsPerRate * 0.5 * mr));
+                const int wanted = static_cast<int>(std::ceil(tapsPerRate_ * 0.5 * mr));
                 b.half = std::min(kMaxHalf, std::max(kMinHalf, wanted));
                 const int taps = 2 * b.half;
                 b.table.resize(static_cast<std::size_t>((kPhases + 1) * taps));
@@ -391,6 +411,8 @@ namespace chalkwalk::tape
             return bank_.back();  // beyond the last bucket — most band-limited kernel
         }
 
+        double tapsPerRate_ = kTapsPerRate;
+        double cutoffGuard_ = kCutoffGuard;
         std::vector<Bucket> bank_;
     };
 }
