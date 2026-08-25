@@ -347,3 +347,143 @@ TEST_CASE("the gather rejects what the rate cannot carry") {
         CHECK(rejectionDb < -45.0);
     }
 }
+
+TEST_CASE("the bank reaches rate 32, and shuttle rates are no longer clamped") {
+    const chalkwalk::tape::Resampler rs;
+
+    // WHAT THIS IS FOR. `bucketFor` clamps past the end of the bank, so before
+    // the bank reached 32 a read at rate 28 was band-limited for 5.66 and
+    // everything between the two folded. Measured on music through a tape
+    // medium, a twelve-times shuttle aliased at -39 dB and a thirty-two-times
+    // one at -23 dB, which is hash rather than a quiet cue.
+    //
+    // Same probe as the test above -- a tone half an octave above what the rate
+    // can carry, which must fold and must not survive -- extended to the rates a
+    // transport actually shuttles at.
+    const auto survivingDb = [&rs](double rate) {
+        const int frames = 4000;
+        const int len = static_cast<int>(2000.0 + frames * rate) + 4096;
+        std::vector<float> src(static_cast<std::size_t>(len));
+        const double srcHz = 0.75 / rate;
+        for (int i = 0; i < len; ++i)
+            src[static_cast<std::size_t>(i)] =
+                static_cast<float>(std::sin(2.0 * kPi * srcHz * i));
+
+        double acc = 0.0;
+        for (int i = 0; i < frames; ++i) {
+            const double v = rs.read(src.data(), len, 1000.0 + i * rate, rate);
+            acc += v * v;
+        }
+        const double level = std::sqrt(acc / frames) * std::sqrt(2.0);
+        return 20.0 * std::log10(std::max(level, 1.0e-12));
+    };
+
+    // Before the extension these rates all clamped to the 5.66 bucket, whose
+    // cutoff is 0.088 cycles/sample -- and the probe at rate 32 sits at 0.023,
+    // WELL INSIDE it, so it passed at essentially full level. Now it is stopped.
+    //
+    // The threshold is -25 and not -45 because of the bucket-top behaviour the
+    // next test pins: a rate sitting exactly at its bucket's maxRate is the
+    // worst case anywhere in the bank, and -28 dB is what the bank has always
+    // given there. 8, 16 and 32 are bucket tops; 11.31 and 22.63 are not.
+    for (const double rate : { 8.0, 11.31, 16.0, 22.63, 28.08, 32.0 }) {
+        const double got = survivingDb(rate);
+        INFO("rate " << rate << ": " << got << " dB survives");
+        CHECK(got < -25.0);
+    }
+
+    // kTopRate names the last bucket, so a caller can decimate to get under it
+    // instead of mirroring the number as a literal and watching it go stale.
+    CHECK(chalkwalk::tape::Resampler::kTopRate == 32.0);
+
+    // Past the top the anti-aliasing stops improving, and that is still true --
+    // it is now true somewhere useful. Reads above the end share one bucket.
+    std::vector<float> probe(2048);
+    for (std::size_t i = 0; i < probe.size(); ++i)
+        probe[i] = static_cast<float>(std::sin(0.31 * static_cast<double>(i)));
+    CHECK(rs.read(probe.data(), 2048, 700.37, 33.0)
+          == rs.read(probe.data(), 2048, 700.37, 1000.0));
+}
+
+TEST_CASE("extending the bank changed nothing at or below the old top") {
+    // THE COMPATIBILITY CLAIM, and the reason it is safe to extend a shared
+    // bank at all. Buckets are chosen by `r <= b.maxRate` against a list that
+    // was appended to, so every rate the old bank served still selects the same
+    // bucket with the same half and the same cutoff. Anything that moved here
+    // would be a silent change to pitch-up in every consumer of this library.
+    const chalkwalk::tape::Resampler rs;
+
+    std::vector<float> src(4096);
+    for (std::size_t i = 0; i < src.size(); ++i)
+        src[i] = static_cast<float>(std::sin(0.21 * static_cast<double>(i))
+                                    + 0.3 * std::cos(0.77 * static_cast<double>(i)));
+
+    // The halves the first six buckets had before the extension.
+    const struct { double rate; int half; } kOld[] = {
+        { 0.5, 8 }, { 1.0, 8 }, { 1.2, 8 }, { 2.0, 8 },
+        { 2.5, 12 }, { 2.82842712, 12 }, { 3.5, 16 }, { 4.0, 16 },
+        { 4.68, 23 }, { 5.65685425, 23 },
+    };
+    for (const auto& c : kOld) {
+        INFO("rate " << c.rate);
+        CHECK(rs.halfFor(c.rate) == c.half);
+    }
+
+    // And the kernel length still follows the rate at eight taps per unit,
+    // floored at sixteen -- the property the bank exists to hold.
+    for (const double rate : { 8.0, 11.3137085, 16.0, 22.627417, 32.0 }) {
+        INFO("rate " << rate);
+        CHECK(rs.halfFor(rate) == static_cast<int>(std::ceil(4.0 * rate)));
+        CHECK(2 * rs.halfFor(rate) >= static_cast<int>(8.0 * rate));
+    }
+}
+
+
+TEST_CASE("worst-case rejection is at the TOP of a bucket, and is -28 dB") {
+    // A PRE-EXISTING PROPERTY, found while extending the bank and pinned here
+    // because it was not written down anywhere and the comment above implies
+    // better. It is not a consequence of the extension: it holds identically at
+    // every bucket, including the ones that have been there all along.
+    //
+    // A bucket band-limits to Nyquist/maxRate, and the probe tone sits at
+    // 0.75/rate. When `rate == maxRate` the tone is 1.5x the cutoff -- which is
+    // inside the TRANSITION, because a Kaiser of bandwidth 9 over 8*maxRate taps
+    // has a transition 1.125/maxRate wide against a passband only 0.5/maxRate
+    // wide. The transition is more than twice the passband, so the stopband
+    // barely exists and what saves the common case is having margin below the
+    // bucket top rather than the filter's own rolloff.
+    //
+    // Half-octave spacing puts every rate in [0.707, 1.0] of its bucket, so
+    // -28 dB is the bank's genuine worst case. Fixing it means either a guard
+    // factor on the cutoff (trading passband) or roughly twice the taps per unit
+    // of rate (trading memory and cycles). That is a policy change for every
+    // consumer of this library and is deliberately NOT bundled with extending
+    // the bank.
+    const chalkwalk::tape::Resampler rs;
+
+    const auto survivingDb = [&rs](double rate) {
+        const int frames = 4000;
+        const int len = static_cast<int>(2000.0 + frames * rate) + 4096;
+        std::vector<float> src(static_cast<std::size_t>(len));
+        for (int i = 0; i < len; ++i)
+            src[static_cast<std::size_t>(i)] =
+                static_cast<float>(std::sin(2.0 * kPi * (0.75 / rate) * i));
+        double acc = 0.0;
+        for (int i = 0; i < frames; ++i) {
+            const double v = rs.read(src.data(), len, 1000.0 + i * rate, rate);
+            acc += v * v;
+        }
+        return 20.0 * std::log10(
+            std::max(std::sqrt(acc / frames) * std::sqrt(2.0), 1.0e-12));
+    };
+
+    // Scale-invariant: the same shape at an old bucket and a new one. If these
+    // ever diverge, the cutoff has stopped being a pure function of maxRate.
+    for (const double bucket : { 2.82842712, 5.65685425, 32.0 }) {
+        INFO("bucket " << bucket);
+        CHECK(survivingDb(bucket * 0.72) < -100.0);   // bottom: excellent
+        CHECK(survivingDb(bucket * 0.90) < -38.0);    // middle: good
+        CHECK(survivingDb(bucket) < -25.0);           // top: the worst case
+        CHECK(survivingDb(bucket) > -35.0);           // and it really is ~-28
+    }
+}

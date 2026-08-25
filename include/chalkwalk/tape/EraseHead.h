@@ -53,6 +53,21 @@ namespace chalkwalk::tape
             return w.position() + dir * gap;
         }
 
+        // The gap the erase head must lead by, for a write at `rate`.
+        //
+        // PREFER THIS TO kMinGap. The write kernel's half is what cannot be
+        // eaten, and that follows the rate: 8 at unity, not the bank's worst
+        // case. Extending the bank to rate 32 took the constant from 24 to 128
+        // and put a 128-sample un-erased lead-in at the head of every replace
+        // pass -- which the tests caught, and which is why this exists.
+        [[nodiscard]] static double minGapFor(double rate) noexcept
+        {
+            return static_cast<double>(sharedKernels().halfFor(rate));
+        }
+
+        // The worst case across the whole bank, for a caller that cannot know
+        // its rate in advance. Correct, and five times larger than it needs to
+        // be at any rate a write actually runs at.
         static constexpr double kMinGap = Resampler::kHalf;
 
         // Attenuate every medium sample swept between the current position and

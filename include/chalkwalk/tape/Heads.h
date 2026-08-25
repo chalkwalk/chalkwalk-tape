@@ -162,7 +162,7 @@ namespace chalkwalk::tape
             const auto k = sharedKernels().kernelFor(rate_, pos_ - baseF);
             if (k.writeGain <= 0.0f) return;  // a stalled head deposits nothing
 
-            commit(m, sub, base);
+            commit(m, sub, base, k.half);
 
             const int chans = std::min(numChans, m.channels());
             for (int ch = 0; ch < chans; ++ch)
@@ -180,14 +180,17 @@ namespace chalkwalk::tape
         // Turn the storage the kernel is about to touch from garbage into silence.
         // A loop is addressable everywhere the moment it is written to at all, so
         // a circular medium commits whole; a reel commits the span under the head.
-        static void commit(Medium& m, int sub, std::int64_t base) noexcept
+        static void commit(Medium& m, int sub, std::int64_t base, int half) noexcept
         {
             if (m.topology() == Topology::Circular)
             {
                 m.ensureCommitted(sub, m.capacity());
                 return;
             }
-            const std::int64_t end = base + Resampler::kHalf + 1;
+            // `half` is THIS write's kernel, not the bank's worst case. At unity
+            // that is 8 taps either side and not 128, so a reel commits the span
+            // the write actually touches.
+            const std::int64_t end = base + half + 1;
             if (end > 0)
                 m.ensureCommitted(sub, static_cast<int>(std::min<std::int64_t>(end, m.capacity())));
         }

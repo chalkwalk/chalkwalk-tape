@@ -44,16 +44,44 @@ namespace chalkwalk::tape
         //   ripple       0.38     0.006     ~0
         //
         // So eight per unit of rate, floored at the original sixteen -- nothing
-        // at or below rate 2 changes at all -- and capped, because past the top
-        // bucket the deposits are further apart than any kernel can bridge and
-        // length stops being the answer.
+        // at or below rate 2 changes at all.
+        //
+        // THE BANK REACHES RATE 32, and used to stop at 5.66. What made that a
+        // problem is how `bucketFor` behaves past the end: it clamps to the last
+        // bucket, so a read at rate 28 was band-limited for 5.66 and everything
+        // between the two folded. Measured on music, a shuttle at twelve times
+        // play speed aliased at **-39 dB** and at thirty-two times at **-23 dB**,
+        // which is hash rather than a quiet muffled cue.
+        //
+        // Half-octave steps continue to 32, which serves a twelve-times shuttle
+        // directly and brings thirty-two times within one halving. Past that the
+        // answer is a decimated copy of the source rather than a longer kernel:
+        // at rate 64 the taps outnumber the samples they span by eight to one,
+        // and storing a band-limited half-rate copy is cheaper than bridging the
+        // gap at read time, every time.
         static constexpr int kMinHalf = 8;          // taps either side, to rate 2
-        static constexpr int kMaxHalf = 24;         // the ceiling, at the top bucket
+        static constexpr int kMaxHalf = 128;        // the ceiling, at the top bucket
         static constexpr int kPhases = 256;         // sub-sample table resolution
 
-        // Retained for callers that only need a worst-case bound -- EraseHead
-        // sizes its minimum gap from it, and WriteHead commits from it. It is
-        // the LONGEST kernel now rather than the only one.
+        // The highest rate the bank band-limits CORRECTLY. Above it `bucketFor`
+        // clamps and the anti-aliasing stops improving, so a caller that can
+        // decimate its source should do so to get back under this.
+        //
+        // Exposed because callers were mirroring it as a literal, which is the
+        // kind of duplicated constant that goes stale silently. Ask the bank.
+        static constexpr double kTopRate = 32.0;
+
+        // The worst-case bound, for callers that cannot know their rate. It is
+        // the LONGEST kernel in the bank rather than the only one.
+        //
+        // PREFER `halfFor(rate)`. Extending the bank to rate 32 took this from
+        // 24 to 128, and anything sizing a safety margin from the constant grew
+        // five-fold for a kernel it will never use: the write path runs at or
+        // near unity -- a record chain decimates to the medium rate before the
+        // head, and a transport that is spooling is not recording -- so its
+        // margin should come from its own rate, not from the fastest read the
+        // bank can serve. That is what broke the erase-head tests when this
+        // number moved, and the fix was to ask for the rate's kernel.
         static constexpr int kHalf = kMaxHalf;
         static constexpr int kTaps = 2 * kHalf;
 
@@ -77,6 +105,16 @@ namespace chalkwalk::tape
             int half = kMinHalf;        // tap i sits at floor(pos) - (half-1) + i
             float writeGain = 1.0f;
         };
+
+        // How long the kernel for `rate` actually is, in taps either side.
+        //
+        // The tight bound: a caller that knows its rate can size a lookahead, a
+        // commit span or an erase gap from the kernel it will really use rather
+        // than from `kHalf`, which is the whole bank's worst case.
+        [[nodiscard]] int halfFor(double rate) const noexcept
+        {
+            return bucketFor(rate).half;
+        }
 
         [[nodiscard]] Kernel kernelFor(double rate, double frac) const noexcept
         {
@@ -200,11 +238,22 @@ namespace chalkwalk::tape
 
         void buildBank()
         {
-            // Half-octave spacing up to ~5.66x (covers ±24 semitone pitch = 4x plus
-            // fine tune). Each bucket band-limits to Nyquist / maxRate.
-            static constexpr std::array<double, 6> kMaxRates = {
-                1.0, 1.41421356, 2.0, 2.82842712, 4.0, 5.65685425
+            // Half-octave spacing to kTopRate. The first six cover ±24 semitone
+            // pitch (4x) plus fine tune, which is what this bank was built for;
+            // the rest serve a tape transport shuttling. Each bucket band-limits
+            // to Nyquist / maxRate.
+            //
+            // Cost, stated because it is not nothing: the table is about 900 kB
+            // against 154 kB before. It is built once, off the audio thread, and
+            // shared process-wide by `sharedKernels()`, and a read touches one
+            // phase row -- at most 1 kB -- so the working set is unchanged. What
+            // grew is a one-off allocation.
+            static constexpr std::array<double, 11> kMaxRates = {
+                1.0, 1.41421356, 2.0, 2.82842712, 4.0, 5.65685425,
+                8.0, 11.3137085, 16.0, 22.627417, 32.0
             };
+            static_assert(kMaxRates.back() == kTopRate,
+                          "kTopRate must name the last bucket");
             // Kaiser shape: a ~9-wide main lobe over a 16-tap window gives a clean
             // stopband (~70 dB) with a transition narrow enough to keep the
             // passband flat. operator() is non-const, so keep a mutable instance.

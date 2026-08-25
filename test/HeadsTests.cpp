@@ -328,7 +328,10 @@ TEST_CASE("heads") {
                 chalkwalk::tape::EraseHead e;
                 e.setErasure(erasure);
                 e.setRate(rate);
-                e.setPosition(chalkwalk::tape::EraseHead::leadFor(w, chalkwalk::tape::EraseHead::kMinGap));
+                // minGapFor(rate), not the bank-wide kMinGap: the gap that
+                // matters is the one THIS write's kernel needs.
+                e.setPosition(chalkwalk::tape::EraseHead::leadFor(
+                    w, chalkwalk::tape::EraseHead::minGapFor(rate)));
 
                 for (int i = 0; i < n; ++i)
                 {
@@ -421,7 +424,8 @@ TEST_CASE("heads") {
             w.setPosition(1000.0);
             chalkwalk::tape::EraseHead e;
             e.setErasure(1.0f);
-            e.setPosition(w.position() - chalkwalk::tape::EraseHead::kMinGap);  // WRONG side
+            e.setPosition(w.position()
+                          - chalkwalk::tape::EraseHead::minGapFor(1.0));  // WRONG side
 
             for (int i = 0; i < 600; ++i)
             {
