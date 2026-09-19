@@ -128,6 +128,26 @@ namespace chalkwalk::tape
             int numSubTracks = 1;
             int channelsPerSubTrack = 2;  // a stereo default; nothing here assumes it
             int capacitySamples = 0;      // per channel
+
+            // ---- HOW LONG THE REEL IS, WHEN THE STORAGE IS ONLY A WINDOW ----
+            //
+            // A LINEAR medium may be longer than the memory bound to it. A
+            // sixteen-track reel at a studio deck's density is about 4 MB of
+            // tape a second, so twenty minutes is five gigabytes: the storage
+            // is a WINDOW that a host streams through, and the tape's
+            // coordinates have to go on meaning the whole reel or nothing above
+            // this class can address it.
+            //
+            // So there are two lengths. `capacitySamples` is how much memory
+            // there is; this is how much TAPE there is. Indices are always the
+            // reel's, and `resolve` maps them onto the window -- which means a
+            // head, a wear map and a seam all keep working in absolute tape
+            // coordinates and know nothing about the streaming.
+            //
+            // **ZERO MEANS THE WINDOW IS THE WHOLE REEL**, which is the
+            // unwindowed medium every existing caller binds and is bit-identical
+            // to it. Ignored for a Circular medium: a loop has no outside.
+            std::int64_t reelSamples = 0;
         };
 
         // Samples of storage a Config needs — the host allocates this many
@@ -155,6 +175,50 @@ namespace chalkwalk::tape
         [[nodiscard]] Topology topology() const noexcept { return cfg_.topology; }
         [[nodiscard]] double mediumRate() const noexcept { return cfg_.mediumRate; }
         [[nodiscard]] int capacity() const noexcept { return cfg_.capacitySamples; }
+
+        // HOW MUCH TAPE, as against how much memory. They differ only on a
+        // windowed linear medium; everywhere else this is `capacity()`.
+        //
+        // RESOLVED AT BIND AND STORED, not worked out here, because `resolve`
+        // is in the innermost gather loop -- thirty-four taps a sample a track
+        // -- and a branch on the topology plus a reach into `cfg_` is not free
+        // at that rate. This is the one place the window costs anything at all,
+        // so it is the one place worth spending care on.
+        [[nodiscard]] std::int64_t reelLength() const noexcept { return reelLength_; }
+
+        // WHICH STRETCH OF THE REEL IS RESIDENT. `origin` is the reel index the
+        // first stored sample holds, so the window covers
+        // `[origin, origin + capacity())`.
+        //
+        // MOVING IT DOES NOT MOVE ANY AUDIO. The medium does not own its
+        // storage and cannot stream: sliding the window says the memory now
+        // means a different stretch of tape, and it is the HOST's business to
+        // have put that stretch there. Slide it without filling it and the
+        // reads come back as whatever was left behind, which is the same
+        // contract `bindPlanes` already has and is why streaming belongs above
+        // this class.
+        //
+        // Clamped so the window cannot hang off either end of the reel, because
+        // a window that did would make some of its own storage unaddressable.
+        void setWindow(std::int64_t origin) noexcept
+        {
+            const std::int64_t last = reelLength_
+                                    - static_cast<std::int64_t>(cfg_.capacitySamples);
+            windowOrigin_ = std::clamp<std::int64_t>(origin, 0, std::max<std::int64_t>(0, last));
+        }
+
+        [[nodiscard]] std::int64_t windowOrigin() const noexcept { return windowOrigin_; }
+
+        // Whether this index is resident right now -- what a streaming host
+        // asks before it lets the heads at a position, and what an underrun
+        // is the absence of (`PRINCIPLES §8` in the host that has one).
+        [[nodiscard]] bool resident(std::int64_t i) const noexcept
+        {
+            if (cfg_.topology == Topology::Circular)
+                return true;
+            return i >= windowOrigin_
+                && i < windowOrigin_ + static_cast<std::int64_t>(cfg_.capacitySamples);
+        }
         [[nodiscard]] int numSubTracks() const noexcept { return cfg_.numSubTracks; }
         [[nodiscard]] int channels() const noexcept { return cfg_.channelsPerSubTrack; }
         [[nodiscard]] Depth depth() const noexcept
@@ -164,7 +228,16 @@ namespace chalkwalk::tape
 
         // How far this sub-track has been written (its high-water mark). Reads
         // past it are silence; nothing below it is ever uninitialised.
-        [[nodiscard]] int used(int sub) const noexcept
+        //
+        // **IN THE REEL'S COORDINATES, NOT THE WINDOW'S**, which is what makes
+        // it survive the window moving: how much of a tape has been recorded is
+        // a fact about the tape. On an unwindowed medium the two are the same
+        // number, which is why this changed nothing for existing callers.
+        //
+        // 64-bit because a reel is: at a studio deck's density an `int` runs
+        // out after about four and a half hours of tape, which is a limit
+        // nobody should meet by accident.
+        [[nodiscard]] std::int64_t used(int sub) const noexcept
         {
             return (sub >= 0 && sub < static_cast<int>(used_.size())) ? used_[static_cast<std::size_t>(sub)] : 0;
         }
@@ -175,7 +248,7 @@ namespace chalkwalk::tape
         // commits the span its kernel is about to touch, which is why a scatter
         // deposit into virgin tape adds to zero rather than to whatever the
         // allocator left. Never lowers the mark — that is `resetUsed`.
-        void ensureCommitted(int sub, int upTo) noexcept;
+        void ensureCommitted(int sub, std::int64_t upTo) noexcept;
 
         // Raise the mark WITHOUT zeroing: the storage below `upTo` already holds
         // audio the caller vouches for — a loop loaded from the pool, a take
@@ -183,7 +256,7 @@ namespace chalkwalk::tape
         // verbs are the difference between virgin tape and a tape with a
         // recording on it, and calling the wrong one either wipes the take or
         // plays back uninitialised memory.
-        void adoptUsed(int sub, int upTo) noexcept;
+        void adoptUsed(int sub, std::int64_t upTo) noexcept;
 
         void resetUsed(int sub) noexcept;
         void resetAllUsed() noexcept;
@@ -201,8 +274,44 @@ namespace chalkwalk::tape
                 out = static_cast<int>(m);
                 return true;
             }
-            if (i < 0 || i >= cap) return false;
-            out = static_cast<int>(i);
+            // ---- LINEAR, AND POSSIBLY A WINDOW ONTO SOMETHING LONGER ----
+            //
+            // Two rejections, and they are different failures. Off the REEL is
+            // tape that does not exist, which is silence and always was. Off the
+            // WINDOW is tape that exists and is not in memory, which is a
+            // streaming host that has not kept up -- indistinguishable here, and
+            // `resident()` is how a caller tells them apart before it gets here.
+            // ONE TEST, NOT TWO, and that it is one is a property of the clamp
+            // rather than an economy. `setWindow` keeps the window inside the
+            // reel and `reelLengthOf` keeps the reel at least as long as the
+            // window, so **being in the window implies being on the reel** and
+            // the reel's own bound is unreachable here. An unbound medium has a
+            // capacity of zero and so rejects everything.
+            //
+            // The first draft tested both, which cost a compare pair in the
+            // innermost gather loop for a condition that cannot be true.
+            //
+            // WHAT THE WINDOW COSTS, MEASURED (`RemanenceBench perf`, Capstan,
+            // 48 kHz, read path, ns per sample per track):
+            //
+            //     no window at all          190.9
+            //     window, first draft       208.3   +17.4 ns  (+9.1 %)
+            //     window, as it stands      199.9    +9.0 ns  (+4.7 %)
+            //
+            // So dropping the redundant test and the topology branch in `read`
+            // gave back half of it, and the remaining 9 ns is the subtract and
+            // the 64-bit compare -- which is what addressing a reel longer than
+            // memory actually costs, rather than an oversight. Sixteen tracks
+            // playing goes from 0.13 of a core to 0.136.
+            //
+            // What is LOST is telling the two failures apart, and they are
+            // different: off the reel is tape that does not exist, off the
+            // window is tape that exists and is not resident. `resident()` is
+            // where a streaming host asks that, before it gets here rather than
+            // inside the loop.
+            const std::int64_t k = i - windowOrigin_;
+            if (k < 0 || k >= cap) return false;
+            out = static_cast<int>(k);
             return true;
         }
 
@@ -213,7 +322,29 @@ namespace chalkwalk::tape
         {
             int k = 0;
             if (! bound() || ! resolve(i, k)) return 0.0f;
-            if (k >= used(sub)) return 0.0f;
+            // ---- WHICH INDEX THE MARK IS COMPARED WITH, AND IT IS ONE SUM ----
+            //
+            // The two topologies want different indices and get them from the
+            // same arithmetic, which is why there is no branch here.
+            //
+            // A LOOP wraps, so index 19 on a sixteen-sample loop IS index 3 and
+            // the mark has to be read against the RESOLVED one. Comparing the
+            // raw index there would make every lap past the first play silence,
+            // and the library's own circular test says so -- which is how that
+            // was found rather than shipped.
+            //
+            // A REEL does not wrap, and its mark is in the reel's coordinates,
+            // so the RAW one is right. Using the resolved one would make a
+            // windowed reel's recorded extent move every time the window did:
+            // silence in the middle of a take.
+            //
+            // `windowOrigin_` IS ALWAYS ZERO ON A LOOP -- `setWindow` clamps it
+            // to a range of zero width there, because a loop's storage is all
+            // of it -- so `k + windowOrigin_` is `k` on a loop and `i` on a
+            // reel. One add replaces a branch on the topology, in a loop that
+            // runs thirty-four times a sample a track.
+            if (static_cast<std::int64_t>(k) + windowOrigin_ >= used(sub))
+                return 0.0f;
             return plane(sub, ch).get(static_cast<std::size_t>(k));
         }
 
@@ -257,6 +388,14 @@ namespace chalkwalk::tape
 
         Config cfg_{};
         std::vector<Store> planes_;
-        std::vector<int> used_;  // per sub-track high-water, in samples
+        // Per sub-track high-water, in samples, IN THE REEL'S COORDINATES.
+        std::vector<std::int64_t> used_;
+        // Which reel index the first stored sample holds. Always 0 on a medium
+        // whose storage is the whole reel, which is every unwindowed one.
+        std::int64_t windowOrigin_ = 0;
+        // How much tape, resolved once when the storage is bound. Zero when
+        // nothing is bound, which is what makes an unbound medium reject every
+        // index without needing a `bound()` test of its own in `resolve`.
+        std::int64_t reelLength_ = 0;
     };
 }

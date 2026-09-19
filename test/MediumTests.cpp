@@ -221,6 +221,183 @@ TEST_CASE("medium") {
             CHECK_MSG(feq(m.read(0, 0, 16), 0.0f), "a read past the end is silence");
         }
 
+        // ── A window onto a longer reel ──────────────────────────────────────
+        //
+        // The storage is 16 samples and the TAPE is 64, which is a reel four
+        // times the size of the memory bound to it. Every index below is the
+        // reel's; nothing here knows or cares where the window happens to be,
+        // which is the property that lets a head, a wear map and a seam stay
+        // written in tape coordinates while a host streams underneath them.
+        {
+            chalkwalk::tape::Medium::Config cfg;
+            cfg.topology = chalkwalk::tape::Topology::Linear;
+            cfg.numSubTracks = 1;
+            cfg.channelsPerSubTrack = 1;
+            cfg.capacitySamples = 16;
+            cfg.reelSamples = 64;
+
+            auto store = dirtyStorage<float>(chalkwalk::tape::Medium::storageSamples(cfg), 9.0f);
+            chalkwalk::tape::Medium m;
+            m.bind(cfg, chalkwalk::tape::Store{store.data(), store.size()});
+
+            CHECK_MSG(m.capacity() == 16, "the window is the memory");
+            CHECK_MSG(m.reelLength() == 64, "the reel is the tape");
+            CHECK_MSG(m.windowOrigin() == 0, "a fresh window starts at the head of the reel");
+
+            // The whole reel is committed, which is a statement about TAPE and
+            // not about memory: only the resident part can be zeroed, and the
+            // mark moves over the rest because the host owns what is not here.
+            m.ensureCommitted(0, 64);
+            CHECK_MSG(m.used(0) == 64, "the mark covers the reel, not the window");
+
+            int k = 0;
+            CHECK_MSG(m.resolve(0, k) && k == 0, "the first reel sample is at the window's start");
+            CHECK_MSG(m.resolve(15, k) && k == 15, "the last resident sample resolves");
+            CHECK_MSG(! m.resolve(16, k), "tape outside the window does not resolve");
+            CHECK_MSG(! m.resolve(64, k), "tape off the end of the reel does not resolve");
+            CHECK_MSG(m.resident(15) && ! m.resident(16), "residency is the window");
+
+            m.write(0, 0, 3, 1.0f);
+            CHECK_MSG(feq(m.read(0, 0, 3), 1.0f), "a resident write reads back");
+
+            // ---- AND NOW THE WINDOW MOVES ----
+            //
+            // Sliding it moves no audio: the same 16 samples of memory now MEAN
+            // reel samples 32..47. A host streams the file into them; this test
+            // is the medium's half of that contract, so it writes them itself.
+            m.setWindow(32);
+            CHECK_MSG(m.windowOrigin() == 32, "the window did not move");
+            CHECK_MSG(! m.resolve(3, k), "the old stretch is no longer addressable");
+            CHECK_MSG(m.resolve(32, k) && k == 0, "the new stretch starts at storage zero");
+            CHECK_MSG(m.resolve(47, k) && k == 15, "and ends at the last sample of it");
+
+            m.write(0, 0, 40, 0.5f);
+            CHECK_MSG(feq(m.read(0, 0, 40), 0.5f), "a write into the moved window reads back");
+
+            // THE MARK DID NOT MOVE WITH IT. How much of a tape has been
+            // recorded is a fact about the tape, and a take does not become
+            // unrecorded because the transport wound past it.
+            CHECK_MSG(m.used(0) == 64, "the window moved the recorded extent");
+        }
+
+        // ── The mark is the reel's, and a window past it reads silence ───────
+        //
+        // THE CASE THE TEST ABOVE CANNOT SEE, and it took an injection to find
+        // that out: with the whole reel committed, comparing the mark against
+        // the window offset gives the same answer as comparing it against the
+        // reel index, so the assertion passed with the comparison broken.
+        //
+        // What separates them is a PARTLY recorded reel whose window sits near
+        // the end of the take. Reel sample 45 is past a mark of 40 and must be
+        // silence; its window offset is 13, which is comfortably inside 40 and
+        // would play whatever the storage last held. That is unrecorded tape
+        // sounding like a take, which is the failure this whole coordinate
+        // rule exists to prevent.
+        {
+            chalkwalk::tape::Medium::Config cfg;
+            cfg.topology = chalkwalk::tape::Topology::Linear;
+            cfg.numSubTracks = 1;
+            cfg.channelsPerSubTrack = 1;
+            cfg.capacitySamples = 16;
+            cfg.reelSamples = 64;
+
+            auto store = dirtyStorage<float>(chalkwalk::tape::Medium::storageSamples(cfg), 9.0f);
+            chalkwalk::tape::Medium m;
+            m.bind(cfg, chalkwalk::tape::Store{store.data(), store.size()});
+
+            // Forty samples of tape have been recorded, and the rest is virgin.
+            m.ensureCommitted(0, 40);
+            CHECK_MSG(m.used(0) == 40, "the take is forty samples long");
+
+            m.setWindow(32);
+            // Inside the take and resident: audible.
+            m.write(0, 0, 35, 1.0f);
+            CHECK_MSG(feq(m.read(0, 0, 35), 1.0f), "tape inside the take went silent");
+
+            // Past the take and resident, WITH SOMETHING UNDER IT. The write
+            // lands in storage -- writing does not move the mark, and
+            // uncommitted storage is garbage by the medium's own discipline --
+            // so the mark is the only thing keeping it quiet.
+            //
+            // AND IT HAS TO BE PUT THERE AFTER THE COMMIT, which is the second
+            // thing an injection had to teach this test: `ensureCommitted`
+            // zeroed the whole resident window, so reading uncommitted tape
+            // gave 0.0 whichever index the mark was compared against, and the
+            // assertion passed with the comparison broken.
+            m.write(0, 0, 45, 0.75f);
+            CHECK_MSG(feq(m.read(0, 0, 45), 0.0f),
+                      "unrecorded tape inside the window played back");
+
+            // A window cannot hang off either end, because storage that fell
+            // outside the reel would be unaddressable.
+            m.setWindow(-8);
+            CHECK_MSG(m.windowOrigin() == 0, "the window ran off the front of the reel");
+            m.setWindow(1000);
+            CHECK_MSG(m.windowOrigin() == 48, "the window ran off the end of the reel");
+        }
+
+        // ── Committing tape that is mostly not in memory ─────────────────────
+        //
+        // `ensureCommitted` takes a span of TAPE and zeroes the part of it that
+        // is resident. With the window at 32 and the whole 64-sample reel being
+        // committed, that intersection is exactly the window -- and the storage
+        // either side of the window is not this medium's to touch.
+        //
+        // THE GUARD IS THE ASSERTION. Sixteen samples are bound out of a
+        // twenty-four sample allocation, so the last eight belong to nobody and
+        // must come through untouched. Without it, a commit that ignores the
+        // window writes `mark` to `target` from a negative offset, which is not
+        // a wrong value but a wrong ADDRESS -- and an assertion on values
+        // cannot see that at all.
+        {
+            chalkwalk::tape::Medium::Config cfg;
+            cfg.topology = chalkwalk::tape::Topology::Linear;
+            cfg.numSubTracks = 1;
+            cfg.channelsPerSubTrack = 1;
+            cfg.capacitySamples = 16;
+            cfg.reelSamples = 64;
+
+            constexpr std::size_t kGuard = 8;
+            auto store = dirtyStorage<float>(
+                chalkwalk::tape::Medium::storageSamples(cfg) + kGuard, 9.0f);
+
+            chalkwalk::tape::Medium m;
+            m.bind(cfg, chalkwalk::tape::Store{store.data(), 16});
+
+            m.setWindow(32);
+            m.ensureCommitted(0, 64);
+
+            CHECK_MSG(m.used(0) == 64, "the mark covers tape that is not resident");
+            for (std::size_t i = 0; i < 16; ++i)
+                CHECK_MSG(feq(store[i], 0.0f), "the resident window was not committed");
+            for (std::size_t i = 16; i < 16 + kGuard; ++i)
+                CHECK_MSG(feq(store[i], 9.0f), "the commit wrote outside the window");
+        }
+
+        // ── An unwindowed medium is exactly what it was ──────────────────────
+        //
+        // `reelSamples = 0` is every existing caller, and the two lengths are
+        // then one length. This is the assertion that says adding the window
+        // cost them nothing.
+        {
+            chalkwalk::tape::Medium::Config cfg;
+            cfg.topology = chalkwalk::tape::Topology::Linear;
+            cfg.numSubTracks = 1;
+            cfg.channelsPerSubTrack = 1;
+            cfg.capacitySamples = 16;
+
+            auto store = dirtyStorage<float>(chalkwalk::tape::Medium::storageSamples(cfg), 9.0f);
+            chalkwalk::tape::Medium m;
+            m.bind(cfg, chalkwalk::tape::Store{store.data(), store.size()});
+
+            CHECK_MSG(m.reelLength() == 16, "an unwindowed reel is its own capacity");
+            CHECK_MSG(m.resident(0) && m.resident(15) && ! m.resident(16),
+                      "the window is the whole of it");
+            m.setWindow(8);
+            CHECK_MSG(m.windowOrigin() == 0,
+                      "a window the size of its reel has nowhere to slide to");
+        }
+
         // ── i16 depth: same medium, half the RAM ─────────────────────────────
         {
             chalkwalk::tape::Medium::Config cfg;
