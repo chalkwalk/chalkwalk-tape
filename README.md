@@ -1,6 +1,7 @@
 # chalkwalk-tape
 
-A tape deck as a library: medium, heads, layers, seams and resampling.
+A tape deck as a library: medium, heads, layers, seams, resampling, and
+the physics of what a reproduce head does not recover.
 JUCE-free, C++17, MIT.
 
 Not a delay line and not a looper — the parts you would build either from.
@@ -18,8 +19,32 @@ discipline.
 | `LayerStack.h` | Layers, and which one you actually hear at a given point |
 | `Seam.h` | The loop join, and what happens to a note that crosses it |
 | `MarkerLane.h` | Positions on the tape that mean something |
-| `Resampler.h` | 16-tap polyphase windowed sinc — **including the scatter write** |
+| `Resampler.h` | Polyphase windowed sinc, sized by rate — **including the scatter write** |
 | `ChannelView.h` | Non-owning view over caller storage |
+
+## The reproduce-side losses
+
+A head does not read back what was written. What it loses is not a taste
+decision and not a filter somebody voiced — it is four closed forms, each from
+a published derivation, each a function of **wavelength** rather than of
+frequency, which is why halving the tape speed and halving the frequency give
+exactly the same answer.
+
+| | |
+|---|---|
+| `LossEffects.h` | Spacing, thickness, gap and azimuth loss, and the response they compose into |
+| `HeadLengthLoss.h` | Duinker and Geurst's Table II: the low-frequency contour ripple a finite head length causes |
+| `TapeEq.h` | The record and reproduce standards (NAB, IEC/CCIR, and the cassette curves) |
+| `MinimumPhase.h` | A minimum-phase FIR from a magnitude, by cepstrum |
+| `FirDesign.h` | Windowed-sinc design |
+| `Interpolator.h` | Band-limited upsampling for an oversampled write path |
+| `DesignCache.h` | Filter designs are pure functions of geometry, speed and rate; this remembers them |
+| `Simd.h` | The one portability shim the filters need |
+
+These arrived from Remanence, which is where they were derived, specified
+(`docs/references/` there) and tested. Their suite moved with them and passes
+unchanged here — inside a repository that knows nothing about tape machines,
+which is the only evidence an extraction was real rather than a rename.
 
 ## The scatter resampler
 

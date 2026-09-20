@@ -16,7 +16,10 @@ add_executable(chalkwalk_tape_tests
     MarkerLaneTests.cpp
     ResamplerTests.cpp
     DeckTests.cpp
-    SpectralMeasureTests.cpp)
+    SpectralMeasureTests.cpp
+    LossEffectsTests.cpp
+    HeadLengthLossTests.cpp
+    MinimumPhaseTests.cpp)
 
 target_link_libraries(chalkwalk_tape_tests
     PRIVATE chalkwalk::tape Catch2::Catch2WithMain)
