@@ -226,6 +226,24 @@ namespace chalkwalk::tape
         // the storage can be `memcpy`d to and from the file.
         void bindInterleaved(const Config& c, Store store) noexcept;
 
+        // ---- SAME TAPE, DIFFERENT MEMORY (`repoint`) ----
+        //
+        // Point the same medium at another block holding another stretch of the
+        // same reel, keeping the geometry AND the high-water marks. What a
+        // streaming host does when it has filled a second window and wants the
+        // heads reading from it: one call, no re-binding, nothing reset.
+        //
+        // **THE MARKS ARE WHY THIS EXISTS.** `bindInterleaved` starts a new
+        // medium and zeroes them, which is right for loading a tape and
+        // catastrophic for swapping a window: the recorded extent would go back
+        // to nothing every time the transport crossed a boundary, and every
+        // take already on the reel would fall silent behind the playhead.
+        //
+        // Refuses a store too small for the geometry, leaving the medium as it
+        // was rather than half-swapped -- a caller that gets this wrong keeps a
+        // working medium pointed at the old window.
+        [[nodiscard]] bool repoint(Store store, std::int64_t origin) noexcept;
+
         void unbind() noexcept;
 
         [[nodiscard]] bool bound() const noexcept { return ! planes_.empty(); }

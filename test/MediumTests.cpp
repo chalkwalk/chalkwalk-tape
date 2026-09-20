@@ -437,6 +437,67 @@ TEST_CASE("medium") {
                       "an interleaved medium played past its mark");
         }
 
+        // ── Repointing: same tape, different memory ──────────────────────────
+        //
+        // What a streaming host does when it has filled a second window and
+        // wants the heads reading from it. The medium must come out of it
+        // pointed at the new block, addressing the new stretch of reel, and
+        // still knowing how much of the tape has been recorded -- that last one
+        // being the whole reason this is not just another `bind`.
+        {
+            constexpr int kSubs = 2;
+            constexpr int kCap = 16;
+
+            chalkwalk::tape::Medium::Config cfg;
+            cfg.topology = chalkwalk::tape::Topology::Linear;
+            cfg.numSubTracks = kSubs;
+            cfg.channelsPerSubTrack = 1;
+            cfg.capacitySamples = kCap;
+            cfg.reelSamples = 256;
+
+            auto first = dirtyStorage<float>(
+                chalkwalk::tape::Medium::storageSamples(cfg), 9.0f);
+            auto second = dirtyStorage<float>(
+                chalkwalk::tape::Medium::storageSamples(cfg), 9.0f);
+
+            chalkwalk::tape::Medium m;
+            m.bindInterleaved(cfg, chalkwalk::tape::Store{first.data(), first.size()});
+
+            // A take that runs well past either window.
+            m.ensureCommitted(0, 200);
+            m.write(0, 0, 5, 0.5f);
+            CHECK_MSG(m.used(0) == 200, "the take is 200 samples long");
+
+            // The host fills the second block for the stretch at 100 and hands
+            // it over. Sub-track 0's sample 100 sits at offset 0 of that block,
+            // woven two apart.
+            second[0] = 0.25f;
+
+            CHECK_MSG(m.repoint(chalkwalk::tape::Store{second.data(), second.size()}, 100),
+                      "the medium refused a good window");
+            CHECK_MSG(m.windowOrigin() == 100, "the window did not move");
+            CHECK_MSG(feq(m.read(0, 0, 100), 0.25f),
+                      "the medium is not reading the new block");
+            int where = 0;
+            CHECK_MSG(! m.resolve(5, where), "the old stretch is still addressable");
+
+            // THE MARKS SURVIVED, which `bindInterleaved` would have zeroed --
+            // and a reel whose recorded extent went back to nothing every time
+            // the transport crossed a window boundary would fall silent behind
+            // the playhead.
+            CHECK_MSG(m.used(0) == 200, "repointing forgot how much tape was recorded");
+
+            // AND A STORE TOO SMALL IS REFUSED RATHER THAN HALF-TAKEN, so a
+            // caller that gets it wrong keeps a working medium on the old
+            // window instead of a broken one on neither.
+            std::vector<float> tiny(4, 0.0f);
+            CHECK_MSG(! m.repoint(chalkwalk::tape::Store{tiny.data(), tiny.size()}, 0),
+                      "the medium accepted a window too small for it");
+            CHECK_MSG(m.windowOrigin() == 100, "a refused repoint moved the window anyway");
+            CHECK_MSG(feq(m.read(0, 0, 100), 0.25f),
+                      "a refused repoint left the medium pointing at nothing");
+        }
+
         // ── An unwindowed medium is exactly what it was ──────────────────────
         //
         // `reelSamples = 0` is every existing caller, and the two lengths are

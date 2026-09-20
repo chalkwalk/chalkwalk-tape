@@ -104,6 +104,33 @@ namespace chalkwalk::tape
         reelLength_ = reelLengthOf(c);
     }
 
+    bool Medium::repoint(Store store, std::int64_t origin) noexcept
+    {
+        if (planes_.empty())
+            return false;
+
+        const std::size_t need = storageSamples(cfg_);
+        if (need == 0 || ! store.valid() || store.size() < need)
+            return false;
+
+        const int count = cfg_.numSubTracks * cfg_.channelsPerSubTrack;
+        const auto stride = static_cast<std::size_t>(count);
+        const auto cap = static_cast<std::size_t>(cfg_.capacitySamples);
+
+        // Rebuilt in place: `planes_` is already the right length, so this
+        // assigns over it and allocates nothing -- which matters because the
+        // caller is the audio thread (`PRINCIPLES §8` in the host).
+        for (int i = 0; i < count; ++i)
+            planes_[static_cast<std::size_t>(i)] =
+                store.plane(static_cast<std::size_t>(i), cap, stride);
+
+        // `used_` IS NOT TOUCHED. How much of the tape has been recorded is a
+        // fact about the tape and survives the window moving, which is the
+        // whole of why this verb exists.
+        setWindow(origin);
+        return true;
+    }
+
     void Medium::unbind() noexcept
     {
         planes_.clear();
