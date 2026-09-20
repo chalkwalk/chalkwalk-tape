@@ -65,6 +65,16 @@ namespace chalkwalk::tape
             return static_cast<double>(sharedKernels().halfFor(rate));
         }
 
+        // The same, for a head that was given its own bank (`Head::setKernels`).
+        // The gap must be measured against the bank the WRITE head will deposit
+        // with, which is why this takes it explicitly rather than reading this
+        // head's: the two are the same in every sane arrangement, and the call
+        // site should have to say so.
+        [[nodiscard]] static double minGapFor(double rate, const Resampler& bank) noexcept
+        {
+            return static_cast<double>(bank.halfFor(rate));
+        }
+
         // The worst case across the whole bank, for a caller that cannot know
         // its rate in advance. Correct, and five times larger than it needs to
         // be at any rate a write actually runs at.

@@ -60,9 +60,30 @@ namespace chalkwalk::tape
             }
         }
 
+        // ---- WHICH BANK THIS HEAD READS AND WRITES WITH ----
+        //
+        // Defaults to `sharedKernels()`, which is what every deck in this
+        // library wants: one bank, built once, shared by every head in the
+        // process. A head that is given its own uses that instead.
+        //
+        // IT EXISTS FOR A CONSUMER WITH A TONE TO KEEP, not for variety. The
+        // bank's two levers -- taps per rate, and how far below Nyquist the
+        // cutoff is guarded -- are audible above unity rate, and the defaults
+        // here were chosen for a tape machine that shuttles at twelve times
+        // speed. A sequencer doing modest varispeed has no such folding to
+        // reject and had its passband chosen years earlier; making it accept a
+        // duller top end as the price of adopting this library would be a
+        // change of sound smuggled in under a refactor.
+        //
+        // The pointer is non-owning and the bank must outlive the head. Pass a
+        // function-local `static const Resampler`, as `sharedKernels()` does.
+        void setKernels(const Resampler& r) noexcept { kernels_ = &r; }
+        [[nodiscard]] const Resampler& kernels() const noexcept { return *kernels_; }
+
     protected:
         double pos_ = 0.0;
         double rate_ = 1.0;
+        const Resampler* kernels_ = &sharedKernels();
     };
 
     // Bandlimited fractional read. The cutoff tracks the rate (reading faster than
@@ -117,7 +138,7 @@ namespace chalkwalk::tape
             const double p = effectivePosition();
             const double baseF = std::floor(p);
             const auto base = static_cast<std::int64_t>(baseF);
-            const auto k = sharedKernels().kernelFor(effectiveRate(), p - baseF);
+            const auto k = kernels().kernelFor(effectiveRate(), p - baseF);
 
             const int chans = std::min(numChans, m.channels());
             for (int ch = 0; ch < chans; ++ch)
@@ -159,7 +180,7 @@ namespace chalkwalk::tape
 
             const double baseF = std::floor(pos_);
             const auto base = static_cast<std::int64_t>(baseF);
-            const auto k = sharedKernels().kernelFor(rate_, pos_ - baseF);
+            const auto k = kernels().kernelFor(rate_, pos_ - baseF);
             if (k.writeGain <= 0.0f) return;  // a stalled head deposits nothing
 
             commit(m, sub, base, k.half);
