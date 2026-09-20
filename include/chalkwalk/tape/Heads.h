@@ -180,11 +180,25 @@ namespace chalkwalk::tape
         // Turn the storage the kernel is about to touch from garbage into silence.
         // A loop is addressable everywhere the moment it is written to at all, so
         // a circular medium commits whole; a reel commits the span under the head.
+        //
+        // ---- AGAINST THE REEL'S LENGTH, NOT THE WINDOW'S CAPACITY ----
+        //
+        // The mark is how much TAPE has been recorded, in the reel's own
+        // coordinates, and `capacity()` is how much MEMORY there is. On an
+        // unwindowed medium they are the same number, which is why clamping to
+        // the wrong one went unnoticed: it is only wrong when the storage is a
+        // window onto something longer.
+        //
+        // What it did there: the mark could never pass one window's length, so
+        // everything a deck recorded after the first window read back as
+        // unrecorded tape -- a take that goes down perfectly and plays back
+        // silent from the first window boundary on. Found by recording over a
+        // window and listening for holes.
         static void commit(Medium& m, int sub, std::int64_t base, int half) noexcept
         {
             if (m.topology() == Topology::Circular)
             {
-                m.ensureCommitted(sub, m.capacity());
+                m.ensureCommitted(sub, m.reelLength());
                 return;
             }
             // `half` is THIS write's kernel, not the bank's worst case. At unity
@@ -192,7 +206,7 @@ namespace chalkwalk::tape
             // the write actually touches.
             const std::int64_t end = base + half + 1;
             if (end > 0)
-                m.ensureCommitted(sub, static_cast<int>(std::min<std::int64_t>(end, m.capacity())));
+                m.ensureCommitted(sub, std::min<std::int64_t>(end, m.reelLength()));
         }
     };
 }
