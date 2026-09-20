@@ -78,6 +78,32 @@ namespace chalkwalk::tape
         reelLength_ = reelLengthOf(c);
     }
 
+    void Medium::bindInterleaved(const Config& c, Store store) noexcept
+    {
+        const std::size_t need = storageSamples(c);
+        if (need == 0 || ! store.valid() || store.size() < need)
+        {
+            unbind();
+            return;
+        }
+
+        const int count = c.numSubTracks * c.channelsPerSubTrack;
+        const auto stride = static_cast<std::size_t>(count);
+        const auto cap = static_cast<std::size_t>(c.capacitySamples);
+
+        cfg_ = c;
+        planes_.clear();
+        planes_.reserve(static_cast<std::size_t>(count));
+        // Plane `i` starts at offset `i` and steps a whole frame at a time,
+        // which is what "sub-track major, one sample each" means when they are
+        // woven rather than laid end to end.
+        for (int i = 0; i < count; ++i)
+            planes_.push_back(store.plane(static_cast<std::size_t>(i), cap, stride));
+        used_.assign(static_cast<std::size_t>(c.numSubTracks), 0);
+        windowOrigin_ = 0;
+        reelLength_ = reelLengthOf(c);
+    }
+
     void Medium::unbind() noexcept
     {
         planes_.clear();

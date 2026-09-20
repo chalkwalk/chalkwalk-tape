@@ -58,48 +58,95 @@ namespace chalkwalk::tape
         Store(float* p, std::size_t n) noexcept : f32_(p), size_(n) {}
         Store(std::int16_t* p, std::size_t n) noexcept : i16_(p), size_(n) {}
 
+        // ---- A PLANE WOVEN THROUGH OTHERS (`stride` > 1) ----
+        //
+        // One track of an INTERLEAVED block: `n` samples of this track, each
+        // `stride` samples apart. It exists because a reel file is interleaved
+        // -- sixteen samples at one tape position, which is what makes sample
+        // alignment structural rather than maintained (`PRINCIPLES §3`) -- and a
+        // window that matches the file's layout is filled by `memcpy` instead of
+        // by a de-interleave.
+        //
+        // `stride` is 1 for every plane that is its own allocation, which is
+        // every existing caller, and the multiply then folds away.
+        Store(float* p, std::size_t n, std::size_t stride) noexcept
+            : f32_(p), size_(n), stride_(stride) {}
+        Store(std::int16_t* p, std::size_t n, std::size_t stride) noexcept
+            : i16_(p), size_(n), stride_(stride) {}
+
+        [[nodiscard]] std::size_t stride() const noexcept { return stride_; }
+
         [[nodiscard]] bool valid() const noexcept { return f32_ != nullptr || i16_ != nullptr; }
         [[nodiscard]] std::size_t size() const noexcept { return size_; }
         [[nodiscard]] Depth depth() const noexcept { return f32_ ? Depth::F32 : Depth::I16; }
 
         [[nodiscard]] float get(std::size_t i) const noexcept
         {
-            if (f32_ != nullptr) return f32_[i];
-            return static_cast<float>(i16_[i]) * (1.0f / 32767.0f);
+            const std::size_t k = i * stride_;
+            if (f32_ != nullptr) return f32_[k];
+            return static_cast<float>(i16_[k]) * (1.0f / 32767.0f);
         }
 
         void set(std::size_t i, float v) noexcept
         {
-            if (f32_ != nullptr) { f32_[i] = v; return; }
-            i16_[i] = quantise(v);
+            const std::size_t k = i * stride_;
+            if (f32_ != nullptr) { f32_[k] = v; return; }
+            i16_[k] = quantise(v);
         }
 
         void add(std::size_t i, float v) noexcept
         {
-            if (f32_ != nullptr) { f32_[i] += v; return; }
-            i16_[i] = quantise(get(i) + v);
+            const std::size_t k = i * stride_;
+            if (f32_ != nullptr) { f32_[k] += v; return; }
+            i16_[k] = quantise(get(i) + v);
         }
 
         void scale(std::size_t i, float g) noexcept
         {
-            if (f32_ != nullptr) { f32_[i] *= g; return; }
-            i16_[i] = quantise(get(i) * g);
+            const std::size_t k = i * stride_;
+            if (f32_ != nullptr) { f32_[k] *= g; return; }
+            i16_[k] = quantise(get(i) * g);
         }
 
         void fill(std::size_t begin, std::size_t count, float v) noexcept
         {
-            if (f32_ != nullptr) { std::fill_n(f32_ + begin, count, v); return; }
-            std::fill_n(i16_ + begin, count, quantise(v));
+            // `std::fill_n` only on a plane of its own; a woven one has to step.
+            if (stride_ == 1)
+            {
+                if (f32_ != nullptr) { std::fill_n(f32_ + begin, count, v); return; }
+                std::fill_n(i16_ + begin, count, quantise(v));
+                return;
+            }
+            if (f32_ != nullptr)
+            {
+                for (std::size_t i = 0; i < count; ++i)
+                    f32_[(begin + i) * stride_] = v;
+                return;
+            }
+            const auto q = quantise(v);
+            for (std::size_t i = 0; i < count; ++i)
+                i16_[(begin + i) * stride_] = q;
         }
 
         // The sub-store [begin, begin + n). A flat block of storage slices into
         // one plane per (sub-track, channel); a host whose channels are already
         // separate allocations — a juce::AudioBuffer, a pool slot — hands each
         // plane over directly instead.
+        // One woven plane out of an interleaved block: `n` samples of this
+        // track starting at `offset`, each `stride` apart. `size()` is the
+        // number of ADDRESSABLE samples -- what a medium's capacity means --
+        // and not the extent of the memory they are spread over.
+        [[nodiscard]] Store plane(std::size_t offset, std::size_t n,
+                                  std::size_t stride) const noexcept
+        {
+            if (f32_ != nullptr) return Store{ f32_ + offset, n, stride };
+            return Store{ i16_ + offset, n, stride };
+        }
+
         [[nodiscard]] Store slice(std::size_t begin, std::size_t n) const noexcept
         {
-            if (f32_ != nullptr) return Store{ f32_ + begin, n };
-            return Store{ i16_ + begin, n };
+            if (f32_ != nullptr) return Store{ f32_ + begin * stride_, n, stride_ };
+            return Store{ i16_ + begin * stride_, n, stride_ };
         }
 
     private:
@@ -114,6 +161,9 @@ namespace chalkwalk::tape
         float* f32_ = nullptr;
         std::int16_t* i16_ = nullptr;
         std::size_t size_ = 0;
+        // ONE by default, which is a plane of its own and every existing
+        // caller. The multiply by a constant 1 is free.
+        std::size_t stride_ = 1;
     };
 
     class Medium
@@ -167,6 +217,14 @@ namespace chalkwalk::tape
         // long. This is how a juce::AudioBuffer or a pool slot becomes a medium:
         // its channels are distinct allocations and nothing may copy them.
         void bindPlanes(const Config& c, const Store* planes, int count) noexcept;
+
+        // ---- BIND ONE INTERLEAVED BLOCK ----
+        //
+        // A frame is `numSubTracks * channelsPerSubTrack` consecutive samples at
+        // one position, which is a reel file's layout. Each plane is a woven
+        // `Store` into it, so the medium reads and writes exactly as before and
+        // the storage can be `memcpy`d to and from the file.
+        void bindInterleaved(const Config& c, Store store) noexcept;
 
         void unbind() noexcept;
 

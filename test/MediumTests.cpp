@@ -374,6 +374,69 @@ TEST_CASE("medium") {
                 CHECK_MSG(feq(store[i], 9.0f), "the commit wrote outside the window");
         }
 
+        // ── Interleaved storage is the same medium, woven ────────────────────
+        //
+        // A reel file is interleaved -- sixteen samples at one tape position --
+        // and a window that matches it is filled by `memcpy` rather than by a
+        // de-interleave. What must not change is what the medium IS: the same
+        // indices, the same marks, the same silence past the mark. So the test
+        // is an equivalence, run against a planar medium of the same geometry
+        // doing the same things.
+        {
+            constexpr int kSubs = 4;
+            constexpr int kCap = 64;
+
+            chalkwalk::tape::Medium::Config cfg;
+            cfg.topology = chalkwalk::tape::Topology::Linear;
+            cfg.numSubTracks = kSubs;
+            cfg.channelsPerSubTrack = 1;
+            cfg.capacitySamples = kCap;
+
+            auto flat = dirtyStorage<float>(
+                chalkwalk::tape::Medium::storageSamples(cfg), 9.0f);
+            auto woven = dirtyStorage<float>(
+                chalkwalk::tape::Medium::storageSamples(cfg), 9.0f);
+
+            chalkwalk::tape::Medium planar, inter;
+            planar.bind(cfg, chalkwalk::tape::Store{flat.data(), flat.size()});
+            inter.bindInterleaved(cfg, chalkwalk::tape::Store{woven.data(), woven.size()});
+
+            CHECK_MSG(inter.bound(), "an interleaved medium did not bind");
+            CHECK_MSG(inter.capacity() == kCap, "the interleaved capacity is wrong");
+            CHECK_MSG(inter.numSubTracks() == kSubs, "the interleaved width is wrong");
+
+            for (int sub = 0; sub < kSubs; ++sub)
+            {
+                planar.ensureCommitted(sub, 40);
+                inter.ensureCommitted(sub, 40);
+            }
+
+            for (int sub = 0; sub < kSubs; ++sub)
+                for (int i = 0; i < 40; ++i)
+                {
+                    const float v = 0.01f * float(i) + 0.1f * float(sub);
+                    planar.write(sub, 0, i, v);
+                    inter.write(sub, 0, i, v);
+                }
+
+            bool same = true;
+            for (int sub = 0; sub < kSubs && same; ++sub)
+                for (int i = 0; i < kCap; ++i)
+                    if (! feq(planar.read(sub, 0, i), inter.read(sub, 0, i)))
+                    { same = false; break; }
+            CHECK_MSG(same, "interleaved storage reads back differently from planar");
+
+            // AND IT IS ACTUALLY WOVEN, which the equivalence above cannot see:
+            // sub-track 2's sample 5 must live at `5 * 4 + 2` in the block, and
+            // if it does not then this is a planar medium wearing a new name.
+            CHECK_MSG(feq(woven[std::size_t(5 * kSubs + 2)], planar.read(2, 0, 5)),
+                      "the interleaved block is not interleaved");
+
+            // The mark still keeps unrecorded tape quiet.
+            CHECK_MSG(feq(inter.read(0, 0, 50), 0.0f),
+                      "an interleaved medium played past its mark");
+        }
+
         // ── An unwindowed medium is exactly what it was ──────────────────────
         //
         // `reelSamples = 0` is every existing caller, and the two lengths are
