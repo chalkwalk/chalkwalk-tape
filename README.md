@@ -22,6 +22,28 @@ discipline.
 | `Resampler.h` | Polyphase windowed sinc, sized by rate — **including the scatter write** |
 | `ChannelView.h` | Non-owning view over caller storage |
 
+## The physics
+
+What a tape machine does that a delay line does not. Each of these is a
+function of **wavelength** or of **wear**, not of a parameter somebody tuned.
+
+| | |
+|---|---|
+| `Hysteresis.h` | Jiles-Atherton magnetisation — the record side, and permanent |
+| `HysteresisBatch.h` | The same, vectorised across tracks |
+| `Bias.h` | The AC bias that makes the medium linear, and what happens when it is wrong |
+| `Transport.h` | Wow, flutter, scrape and motor ripple, from reel and capstan geometry |
+| `WearMap.h` | What passing tape does to a head, and what a drawer does to a reel |
+| `TapeNoise.h` | Modulation noise and the particulate floor |
+| `Compander.h` | dbx-style 2:1 companding, the two halves on opposite sides of the medium |
+| `SlidingBand.h` | A sliding-band companding system in the dual-path topology |
+| `PowerSupply.h` | Mains hum and rail sag — one supply, every channel |
+
+`PowerSupply` is the borderline one and is here rather than in chalkwalk-dsp
+because its figures come from tape-machine service literature and its consumers
+are machines. It is the first thing to move down if something that is not a
+tape machine wants a sagging rail.
+
 ## The reproduce-side losses
 
 A head does not read back what was written. What it loses is not a taste

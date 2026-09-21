@@ -19,7 +19,16 @@ add_executable(chalkwalk_tape_tests
     SpectralMeasureTests.cpp
     LossEffectsTests.cpp
     HeadLengthLossTests.cpp
-    HeadKernelsTests.cpp)
+    HeadKernelsTests.cpp
+    HysteresisTests.cpp
+    HysteresisBatchTests.cpp
+    BiasTests.cpp
+    TransportTests.cpp
+    WearMapTests.cpp
+    CompanderTests.cpp
+    SlidingBandTests.cpp
+    PowerSupplyTests.cpp
+    LambdaCutTests.cpp)
 
 target_link_libraries(chalkwalk_tape_tests
     # chalkwalk::dsp is the SUITE's dependency and not the library's: the
