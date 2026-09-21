@@ -37,12 +37,10 @@ function of **wavelength** or of **wear**, not of a parameter somebody tuned.
 | `TapeNoise.h` | Modulation noise and the particulate floor |
 | `Compander.h` | dbx-style 2:1 companding, the two halves on opposite sides of the medium |
 | `SlidingBand.h` | A sliding-band companding system in the dual-path topology |
-| `PowerSupply.h` | Mains hum and rail sag — one supply, every channel |
 
-`PowerSupply` is the borderline one and is here rather than in chalkwalk-dsp
-because its figures come from tape-machine service literature and its consumers
-are machines. It is the first thing to move down if something that is not a
-tape machine wants a sagging rail.
+`PowerSupply` was here for one commit and is in **chalkwalk-dsp** now. It was
+the borderline case — nothing about a reservoir capacitor is magnetic, and what
+made it look like tape was only its provenance. Provenance is not scope.
 
 ## The reproduce-side losses
 

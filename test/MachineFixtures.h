@@ -2,7 +2,7 @@
 
 // REALISTIC NUMBERS, SO THE ASSERTIONS DID NOT HAVE TO CHANGE.
 //
-// The suites in this directory for `Transport`, `WearMap` and `PowerSupply`
+// The suites in this directory for `Transport` and `WearMap`
 // were written in Remanence against `capstanGeometry()` -- a sixteen-track
 // studio deck -- and moved here when those headers did. This library has no
 // machine catalogue and should not grow one: which decks exist is an editorial

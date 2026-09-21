@@ -27,7 +27,6 @@ add_executable(chalkwalk_tape_tests
     WearMapTests.cpp
     CompanderTests.cpp
     SlidingBandTests.cpp
-    PowerSupplyTests.cpp
     LambdaCutTests.cpp)
 
 target_link_libraries(chalkwalk_tape_tests
