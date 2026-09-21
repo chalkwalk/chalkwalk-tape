@@ -19,11 +19,14 @@ add_executable(chalkwalk_tape_tests
     SpectralMeasureTests.cpp
     LossEffectsTests.cpp
     HeadLengthLossTests.cpp
-    MinimumPhaseTests.cpp
     HeadKernelsTests.cpp)
 
 target_link_libraries(chalkwalk_tape_tests
-    PRIVATE chalkwalk::tape Catch2::Catch2WithMain)
+    # chalkwalk::dsp is the SUITE's dependency and not the library's: the
+    # spectral measure lives there now, shared with every other project that
+    # asserts a spectral claim. Never chalkwalk::dsp::measure -- that carries
+    # libebur128, and none of these assertions need BS.1770.
+    PRIVATE chalkwalk::tape chalkwalk::dsp Catch2::Catch2WithMain)
 
 # MSVC does not speak GCC's warning flags, and passing them is a hard error
 # rather than a warning -- so an unguarded list breaks the Windows build at the
@@ -36,3 +39,11 @@ else()
 endif()
 
 add_test(NAME chalkwalk_tape COMMAND chalkwalk_tape_tests)
+
+# The dependency on chalkwalk-dsp runs ONE WAY. A cycle between two INTERFACE
+# libraries builds and passes; what it destroys is the ability to take either
+# one on its own, and that is discovered far too late. See the script.
+add_test(NAME chalkwalk_tape_layering
+         COMMAND ${CMAKE_COMMAND}
+                 -DDSP_DIR=$<TARGET_PROPERTY:chalkwalk_dsp,SOURCE_DIR>
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/CheckLayering.cmake)

@@ -60,12 +60,35 @@ this library is not simply a wrapper over one of those.
 
 ## Dependencies
 
+The library itself has **one**, and it is third-party. A second, first-party
+one is used by the SUITE only.
+
+### What the library links
+
 One: [signalsmith-dsp](https://github.com/Signalsmith-Audio/dsp) (MIT,
 header-only), for the Kaiser window the polyphase bank is built from. That is
 a deliberate exception to this ecosystem's usual dependency-free rule — a
 Kaiser window is a *specification*, it needs a modified Bessel function of the
 first kind, and getting that subtly wrong does not fail loudly, it quietly
 degrades the stopband. Clone with `--recursive`.
+
+### What the suite links
+
+[chalkwalk-dsp](https://github.com/chalkwalk/chalkwalk-dsp) (MIT, JUCE-free),
+for spectral measurement — shared with every other project in this ecosystem
+that asserts a spectral claim, because the alternative was two identical
+radix-2 transforms in two repositories with nothing keeping them honest about
+each other.
+
+`chalkwalk::dsp` only, never `chalkwalk::dsp::measure`: that target carries
+libebur128, and asserting that a resampler is quiet does not need BS.1770.
+
+**It is inside the tests guard.** A parent building only the library never
+configures chalkwalk-dsp, never clones it, and never discovers it exists. The
+edge runs one way — dsp holds primitives and knows no domain, this is a machine
+built from them — and `chalkwalk_tape_layering` is a ctest that fails if
+chalkwalk-dsp ever reaches back. A cycle between two header-only libraries does
+not fail loudly; it just quietly makes neither of them extractable.
 
 ## Build and test
 
