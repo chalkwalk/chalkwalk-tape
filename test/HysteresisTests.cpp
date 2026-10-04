@@ -1509,7 +1509,10 @@ TEST_CASE("RK4 in the field is near-exact where the field does not reverse",
     // textbook second order.
     //
     // Measured: 5.0e-13 against 1.2e-8 at 48 kHz. Five orders.
-    constexpr double target = 3.0e5;
+    // STATIC, so the captureless lambdas below may read it. Reading a
+    // constexpr local without capturing it is legal C++17, and GCC, Clang
+    // and MSVC in C++20 accept it -- MSVC in C++17 mode does not (C3493).
+    static constexpr double target = 3.0e5;
     constexpr int n = 960;
 
     auto rampThrough = [](tape::Solver solver, int samples)
@@ -1665,7 +1668,10 @@ TEST_CASE("RK2 is second order where RK4 is not", "[hysteresis][rk2]")
     // order is reachable. RK2 should be far worse there -- which is the evidence
     // that it really is a lower-order method and the sine result is about the
     // signal rather than about the solvers being the same.
-    constexpr double target = 3.0e5;
+    // STATIC, so the captureless lambdas below may read it. Reading a
+    // constexpr local without capturing it is legal C++17, and GCC, Clang
+    // and MSVC in C++20 accept it -- MSVC in C++17 mode does not (C3493).
+    static constexpr double target = 3.0e5;
     constexpr int n = 960;
 
     auto rampTo = [](tape::Solver solver, int samples, double rate)
