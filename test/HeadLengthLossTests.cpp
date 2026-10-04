@@ -13,6 +13,9 @@
 #include <chalkwalk/tape/LossEffects.h>
 
 #include <cmath>
+#include <chalkwalk/dsp/Pi.h>
+
+using chalkwalk::dsp::kPi;   // not M_PI, which MSVC lacks
 
 using Catch::Approx;
 namespace tape = chalkwalk::tape;
@@ -108,8 +111,8 @@ TEST_CASE("the interpolant hits the tabulated points and holds the edges",
     // smoothed away by its own accessor.
     REQUIRE(tape::headLengthLossFactor(0.0, 0.1) == Approx(0.701));
     REQUIRE(tape::headLengthLossFactor(0.0, 0.7) == Approx(1.195));
-    REQUIRE(tape::headLengthLossFactor(M_PI / 2.0, 10.0) == Approx(1.000));
-    REQUIRE(tape::headLengthLossFactor(M_PI / 8.0, 2.0) == Approx(0.912));
+    REQUIRE(tape::headLengthLossFactor(kPi / 2.0, 10.0) == Approx(1.000));
+    REQUIRE(tape::headLengthLossFactor(kPi / 8.0, 2.0) == Approx(0.912));
 
     // Between them it interpolates rather than jumping.
     const double mid = tape::headLengthLossFactor(0.0, 0.65);
@@ -125,7 +128,7 @@ TEST_CASE("the interpolant hits the tabulated points and holds the edges",
     // A rounding beyond the tabulated range clamps rather than extrapolating
     // into nonsense.
     REQUIRE(tape::headLengthLossFactor(10.0, 3.0)
-            == Approx(tape::headLengthLossFactor(M_PI / 2.0, 3.0)));
+            == Approx(tape::headLengthLossFactor(kPi / 2.0, 3.0)));
 }
 
 TEST_CASE("the wavelength form puts the head length in wavelengths",

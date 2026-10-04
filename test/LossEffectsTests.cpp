@@ -15,6 +15,9 @@
 
 #include <cmath>
 #include <vector>
+#include <chalkwalk/dsp/Pi.h>
+
+using chalkwalk::dsp::kPi;   // not M_PI, which MSVC lacks
 
 using Catch::Approx;
 namespace tape = chalkwalk::tape;
@@ -29,7 +32,7 @@ TEST_CASE("spacing loss is 54.6 dB per wavelength of spacing", "[tape][loss]")
     // output is down 54.6 dB. Asserting the constant rather than a buffer is
     // what makes this test able to fail informatively.
     const double lambda = 1.0e-3;
-    const double k = 2.0 * M_PI / lambda;
+    const double k = 2.0 * kPi / lambda;
 
     const double atOneWavelength = tape::spacingLoss(k, lambda);
     const double dB = 20.0 * std::log10(atOneWavelength);
@@ -39,7 +42,7 @@ TEST_CASE("spacing loss is 54.6 dB per wavelength of spacing", "[tape][loss]")
 
 TEST_CASE("spacing loss is exponential in spacing", "[tape][loss]")
 {
-    const double k = 2.0 * M_PI / 1.0e-3;
+    const double k = 2.0 * kPi / 1.0e-3;
     // Doubling the spacing squares the loss; that is what exponential means and
     // it is the property a wrong sign or a stray factor would break.
     REQUIRE(tape::spacingLoss(k, 2.0e-5)
@@ -52,7 +55,7 @@ TEST_CASE("thickness loss has the right limits", "[tape][loss]")
 
     SECTION("long wavelength: the whole coating contributes")
     {
-        const double k = 2.0 * M_PI / 100.0;  // lambda enormous vs delta
+        const double k = 2.0 * kPi / 100.0;  // lambda enormous vs delta
         REQUIRE(tape::thicknessLoss(k, delta) == Approx(1.0).margin(1.0e-4));
     }
 
@@ -62,14 +65,14 @@ TEST_CASE("thickness loss has the right limits", "[tape][loss]")
         // (1 - exp(-x))/x = 1 - x/2 + O(x^2), so at lambda = 1 m the loss is
         // 0.99989 rather than 1, and a test that only checked "close to 1" would
         // pass for any function that happened to be close to 1.
-        const double k = 2.0 * M_PI / 1.0;
+        const double k = 2.0 * kPi / 1.0;
         const double kd = k * delta;
         REQUIRE(tape::thicknessLoss(k, delta) == Approx(1.0 - kd / 2.0).epsilon(1.0e-6));
     }
 
     SECTION("short wavelength: only the top skin, so it tends to 1/(k*delta)")
     {
-        const double k = 2.0 * M_PI / 1.0e-6;
+        const double k = 2.0 * kPi / 1.0e-6;
         REQUIRE(tape::thicknessLoss(k, delta) == Approx(1.0 / (k * delta)).epsilon(1.0e-6));
     }
 
@@ -113,7 +116,7 @@ TEST_CASE("type a nulls where the gap equals a whole wavelength", "[tape][loss][
 {
     // x = pi*l/lambda, so l = lambda is x = pi.
     for (int n = 1; n <= 4; ++n)
-        REQUIRE(tape::gapLossInfinite(static_cast<double>(n) * M_PI) == Approx(0.0).margin(1.0e-12));
+        REQUIRE(tape::gapLossInfinite(static_cast<double>(n) * kPi) == Approx(0.0).margin(1.0e-12));
 }
 
 TEST_CASE("the practical head nulls at 0.9 wavelengths, not 1.0", "[tape][loss][gap]")
@@ -125,10 +128,10 @@ TEST_CASE("the practical head nulls at 0.9 wavelengths, not 1.0", "[tape][loss][
     //
     // If this test ever "fails because someone simplified gapLossSemiInfinite
     // to a sinc", that is the test doing its job.
-    REQUIRE(tape::gapLossSemiInfinite(0.9 * M_PI) == Approx(0.0).margin(1.0e-9));
+    REQUIRE(tape::gapLossSemiInfinite(0.9 * kPi) == Approx(0.0).margin(1.0e-9));
 
     // And it is NOT null where the textbook formula is.
-    REQUIRE(std::abs(tape::gapLossSemiInfinite(M_PI)) > 0.05);
+    REQUIRE(std::abs(tape::gapLossSemiInfinite(kPi)) > 0.05);
 }
 
 TEST_CASE("type b maxima decay more slowly than type a", "[tape][loss][gap]")
@@ -144,8 +147,8 @@ TEST_CASE("type b maxima decay more slowly than type a", "[tape][loss][gap]")
         return best;
     };
 
-    const double aPeak = peakNear(tape::gapLossInfinite, 10.5 * M_PI);
-    const double bPeak = peakNear(tape::gapLossThin, 10.5 * M_PI);
+    const double aPeak = peakNear(tape::gapLossInfinite, 10.5 * kPi);
+    const double bPeak = peakNear(tape::gapLossThin, 10.5 * kPi);
     REQUIRE(bPeak > aPeak * 2.0);
 }
 
@@ -162,7 +165,7 @@ TEST_CASE("the semi-infinite head is intermediate between the other two", "[tape
         return best;
     };
 
-    for (const double centre : {6.5 * M_PI, 10.5 * M_PI, 14.5 * M_PI})
+    for (const double centre : {6.5 * kPi, 10.5 * kPi, 14.5 * kPi})
     {
         const double a = envelope(tape::gapLossInfinite, centre);
         const double b = envelope(tape::gapLossThin, centre);
@@ -178,7 +181,7 @@ TEST_CASE("azimuth loss and gap loss are the same integral", "[tape][loss][azimu
     // the gap length, azimuth loss over the along-track displacement
     // W*tan(theta). They therefore agree when the windows match, and this test
     // is what stops the two implementations drifting apart.
-    const double k = 2.0 * M_PI / 1.0e-3;
+    const double k = 2.0 * kPi / 1.0e-3;
     const double width = 1.0e-3;
     const double theta = 0.01;
     const double window = width * std::tan(theta);
@@ -189,7 +192,7 @@ TEST_CASE("azimuth loss and gap loss are the same integral", "[tape][loss][azimu
 
 TEST_CASE("perfect alignment costs nothing", "[tape][loss][azimuth]")
 {
-    REQUIRE(tape::azimuthLoss(2.0 * M_PI / 1.0e-3, 1.0e-3, 0.0) == Approx(1.0));
+    REQUIRE(tape::azimuthLoss(2.0 * kPi / 1.0e-3, 1.0e-3, 0.0) == Approx(1.0));
 }
 
 TEST_CASE("a stopped transport does not produce infinities", "[tape][loss]")

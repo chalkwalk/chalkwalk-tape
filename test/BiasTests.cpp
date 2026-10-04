@@ -18,6 +18,9 @@
 
 #include <cmath>
 #include <vector>
+#include <chalkwalk/dsp/Pi.h>
+
+using chalkwalk::dsp::kPi;   // not M_PI, which MSVC lacks
 
 using Catch::Approx;
 namespace tape = chalkwalk::tape;
@@ -116,7 +119,7 @@ namespace
         const auto n = signal.size();
         for (std::size_t i = 0; i < n; ++i)
         {
-            const double phase = 2.0 * M_PI * static_cast<double>(i) / static_cast<double>(n);
+            const double phase = 2.0 * kPi * static_cast<double>(i) / static_cast<double>(n);
             windowed[i] = signal[i] * (0.35875 - 0.48829 * std::cos(phase)
                                        + 0.14128 * std::cos(2.0 * phase)
                                        - 0.01168 * std::cos(3.0 * phase));
@@ -140,7 +143,7 @@ namespace
         const auto n = signal.size();
         for (std::size_t i = 0; i < n; ++i)
         {
-            const double phase = 2.0 * M_PI * static_cast<double>(i) / static_cast<double>(n);
+            const double phase = 2.0 * kPi * static_cast<double>(i) / static_cast<double>(n);
             windowed[i] = signal[i] * (0.35875 - 0.48829 * std::cos(phase)
                                        + 0.14128 * std::cos(2.0 * phase)
                                        - 0.01168 * std::cos(3.0 * phase));
@@ -203,7 +206,7 @@ TEST_CASE("bias linearises the recording", "[bias]")
         out.reserve(n);
         for (int i = 0; i < n; ++i)
         {
-            const double signal = signalAmplitude * std::sin(2.0 * M_PI * hz * i / rate);
+            const double signal = signalAmplitude * std::sin(2.0 * kPi * hz * i / rate);
             out.push_back(h.process(wanted ? signal + bias.next() : signal));
         }
         return out;
@@ -303,7 +306,7 @@ TEST_CASE("the carrier is a rotation, and it does not drift",
     tape::BiasOscillator b;
     REQUIRE(b.prepare(rate, hz, amplitude));
 
-    const double increment = 2.0 * M_PI * hz / rate;
+    const double increment = 2.0 * kPi * hz / rate;
     double worst = 0.0;
     double worstPeak = 0.0;
 

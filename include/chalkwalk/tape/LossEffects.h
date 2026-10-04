@@ -18,6 +18,9 @@
 //
 // JUCE-free by design. Promotion target: chalkwalk-tape.
 
+#include <chalkwalk/dsp/Bessel.h>
+#include <chalkwalk/dsp/Pi.h>
+
 #include <chalkwalk/tape/HeadLengthLoss.h>
 
 #include <cmath>
@@ -33,7 +36,7 @@ namespace chalkwalk::tape
     {
         if (speedMps <= 0.0)
             return 0.0;
-        return 2.0 * M_PI * frequencyHz / speedMps;
+        return 2.0 * dsp::kPi * frequencyHz / speedMps;
     }
 
     // Spacing loss: exp(-k*a). SOURCES section 2.
@@ -112,9 +115,13 @@ namespace chalkwalk::tape
     // instead of 1/x -- asymptotically sin(x + pi/4) / sqrt(pi*x/2) -- so a
     // thin-gap head keeps more output past its first null than the textbook
     // formula predicts.
+    //
+    // `dsp::besselJ0` rather than `std::cyl_bessel_j`, which Apple's standard
+    // library does not provide: this header failed every macOS build from the
+    // moment it was promoted (`chalkwalk/dsp/Bessel.h` has the rest).
     [[nodiscard]] inline double gapLossThin(double x) noexcept
     {
-        return std::cyl_bessel_j(0.0, std::abs(x));
+        return dsp::besselJ0(x);
     }
 
     // Type c: S(x), the practical head. Intermediate between a and b.
@@ -300,7 +307,7 @@ namespace chalkwalk::tape
         // tabulated range from sharp to semicircular. Chosen, not measured -- a
         // real head is contoured but nothing like semicircular -- and it is one
         // of the two numbers here that wants a machine of its own.
-        double contourRounding  = M_PI / 8.0;
+        double contourRounding  = dsp::kPi / 8.0;
 
         // What the SHIELD does to the undulation, as a multiplier on its
         // departure from unity.
@@ -393,10 +400,10 @@ namespace chalkwalk::tape
             return 1.0;
 
         const double lambda = speedMps / frequencyHz;
-        const double reach = std::exp(-2.0 * M_PI * gap / lambda);
-        const double extent = 1.0 - std::exp(-2.0 * M_PI * head.trackWidthMetres / lambda);
+        const double reach = std::exp(-2.0 * dsp::kPi * gap / lambda);
+        const double extent = 1.0 - std::exp(-2.0 * dsp::kPi * head.trackWidthMetres / lambda);
         const double unshielded =
-            (lambda / (2.0 * M_PI * head.trackWidthMetres)) * reach * extent;
+            (lambda / (2.0 * dsp::kPi * head.trackWidthMetres)) * reach * extent;
 
         // The shield is frequency-independent here, and that is an assumption
         // rather than a result: a mu-metal shield's effectiveness does vary with

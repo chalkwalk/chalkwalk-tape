@@ -17,6 +17,9 @@
 
 #include <cmath>
 #include <vector>
+#include <chalkwalk/dsp/Pi.h>
+
+using chalkwalk::dsp::kPi;   // not M_PI, which MSVC lacks
 
 using Catch::Approx;
 namespace tape = chalkwalk::tape;
@@ -190,7 +193,7 @@ namespace
         std::vector<double> v;
         v.reserve(static_cast<std::size_t>(n));
         for (int i = 0; i < n; ++i)
-            v.push_back(amplitude * std::sin(2.0 * M_PI * cycles * i / n));
+            v.push_back(amplitude * std::sin(2.0 * kPi * cycles * i / n));
         return v;
     }
 }
@@ -346,7 +349,7 @@ TEST_CASE("the solver converges as the step shrinks", "[hysteresis][solver]")
     // the solver is in fact agreeing to 0.1%. An integrator test that compares
     // the wrong points measures the test, not the integrator.
     constexpr int coarseSamples = 4800;
-    auto fieldAt = [](int i, int n) { return 2.0e5 * std::sin(2.0 * M_PI * 10.0 * i / n); };
+    auto fieldAt = [](int i, int n) { return 2.0e5 * std::sin(2.0 * kPi * 10.0 * i / n); };
 
     tape::Hysteresis coarse, fine;
     coarse.prepare(48000.0);
@@ -478,7 +481,7 @@ TEST_CASE("the solver rejects the trapezoidal rule's alternating error", "[hyste
     std::vector<double> out;
     out.reserve(n);
     for (int i = 0; i < n; ++i)
-        out.push_back(h.process(1.0e5 * std::sin(2.0 * M_PI * 1000.0 * i / 48000.0)));
+        out.push_back(h.process(1.0e5 * std::sin(2.0 * kPi * 1000.0 * i / 48000.0)));
 
     // Energy at exactly Nyquist -- the alternating component -- against total.
     // A clean output has essentially none.
@@ -800,9 +803,9 @@ namespace
     {
         const auto stock = tape::TapeStock::ferricOxide();
         const double T = 1.0 / sampleRate;
-        auto H = [&](double t) { return amplitude * std::sin(2.0 * M_PI * hz * t); };
+        auto H = [&](double t) { return amplitude * std::sin(2.0 * kPi * hz * t); };
         auto Hdot = [&](double t)
-        { return amplitude * 2.0 * M_PI * hz * std::cos(2.0 * M_PI * hz * t); };
+        { return amplitude * 2.0 * kPi * hz * std::cos(2.0 * kPi * hz * t); };
 
         double M = 0.0;
         for (int i = 0; i < samples; ++i)
@@ -823,7 +826,7 @@ namespace
         auto h = makeSolver(solver, sampleRate);
         double last = 0.0;
         for (int i = 0; i < samples; ++i)
-            last = h.process(amplitude * std::sin(2.0 * M_PI * hz * i / sampleRate));
+            last = h.process(amplitude * std::sin(2.0 * kPi * hz * i / sampleRate));
         return last;
     }
 }
@@ -920,8 +923,8 @@ TEST_CASE("the two solvers agree to within the reconstruction's bias",
 
     for (int i = 0; i < 48000; ++i)
     {
-        const double field = 2.0e5 * std::sin(2.0 * M_PI * 220.0 * i / 48000.0)
-                           + 6.0e4 * std::sin(2.0 * M_PI * 3100.0 * i / 48000.0);
+        const double field = 2.0e5 * std::sin(2.0 * kPi * 220.0 * i / 48000.0)
+                           + 6.0e4 * std::sin(2.0 * kPi * 3100.0 * i / 48000.0);
         worst = std::max(worst, std::abs(rk4.process(field) - newton.process(field)));
     }
 
@@ -945,7 +948,7 @@ TEST_CASE("Newton converges in a handful of iterations", "[hysteresis][newton]")
 
     for (int i = 0; i < n; ++i)
     {
-        newton.process(3.0e5 * std::sin(2.0 * M_PI * 440.0 * i / 48000.0));
+        newton.process(3.0e5 * std::sin(2.0 * kPi * 440.0 * i / 48000.0));
         worstIterations = std::max(worstIterations, newton.lastIterations());
         total += newton.lastIterations();
     }
@@ -975,7 +978,7 @@ TEST_CASE("Newton also rejects the trapezoidal rule's alternating error",
     std::vector<double> out;
     out.reserve(n);
     for (int i = 0; i < n; ++i)
-        out.push_back(newton.process(1.0e5 * std::sin(2.0 * M_PI * 1000.0 * i / 48000.0)));
+        out.push_back(newton.process(1.0e5 * std::sin(2.0 * kPi * 1000.0 * i / 48000.0)));
 
     double alternating = 0.0;
     double total = 0.0;
@@ -1038,7 +1041,7 @@ TEST_CASE("Newton is odd-symmetric too", "[hysteresis][newton]")
 
     for (int i = 0; i < 4000; ++i)
     {
-        const double field = 1.5e5 * std::sin(2.0 * M_PI * 5.0 * i / 4000.0);
+        const double field = 1.5e5 * std::sin(2.0 * kPi * 5.0 * i / 4000.0);
         const double positive = a.process(field);
         const double inverted = b.process(-field);
         REQUIRE(inverted == Approx(-positive).epsilon(1.0e-9));
@@ -1075,7 +1078,7 @@ TEST_CASE("Newton converges across the operating regime", "[hysteresis][newton]"
 
         for (int i = 0; i < 24000; ++i)
         {
-            h.process(c.amplitude * std::sin(2.0 * M_PI * c.hz * i / 48000.0));
+            h.process(c.amplitude * std::sin(2.0 * kPi * c.hz * i / 48000.0));
             REQUIRE(h.lastSolveConverged());
             worst = std::max(worst, h.lastIterations());
         }
@@ -1095,7 +1098,7 @@ TEST_CASE("the demanding cases need more than one iteration", "[hysteresis][newt
     int worst = 0;
     for (int i = 0; i < 24000; ++i)
     {
-        h.process(2.0e5 * std::sin(2.0 * M_PI * 8000.0 * i / 48000.0));
+        h.process(2.0e5 * std::sin(2.0 * kPi * 8000.0 * i / 48000.0));
         worst = std::max(worst, h.lastIterations());
     }
 
@@ -1126,7 +1129,7 @@ TEST_CASE("Newton stays converged and bounded past 2.5 samples per cycle",
 
     for (int i = 0; i < 24000; ++i)
     {
-        const double M = h.process(8.0e5 * std::sin(2.0 * M_PI * 19000.0 * i / 48000.0));
+        const double M = h.process(8.0e5 * std::sin(2.0 * kPi * 19000.0 * i / 48000.0));
         REQUIRE(std::isfinite(M));
         REQUIRE(std::abs(M) <= saturation);
         REQUIRE(h.lastSolveConverged());
@@ -1388,8 +1391,8 @@ TEST_CASE("the solver agrees with itself whichever way it evaluates",
             // AUDIO ONLY. Adding the bias carrier here breaks the in-field
             // rungs entirely, which is a defect of its own and is pinned by
             // the test below rather than folded into this one.
-            const double field = 2.0e5 * std::sin(2.0 * M_PI * 220.0 * i / kSolverRate)
-                               + 6.0e4 * std::sin(2.0 * M_PI * 3100.0 * i / kSolverRate);
+            const double field = 2.0e5 * std::sin(2.0 * kPi * 220.0 * i / kSolverRate)
+                               + 6.0e4 * std::sin(2.0 * kPi * 3100.0 * i / kSolverRate);
             worst = std::max(worst, std::abs(exact.process(field) - tabulated.process(field)));
         }
 
@@ -1481,7 +1484,7 @@ TEST_CASE("tabulating the Langevin terms changes nothing the machine can hear",
             for (int i = 0; i < 76800; ++i)   // a tenth of a second
             {
                 const double audio = drive * std::sin(
-                    2.0 * M_PI * 1000.0 * i / kSolverRate);
+                    2.0 * kPi * 1000.0 * i / kSolverRate);
                 divergence = std::max(divergence,
                     std::abs(exact.process(audio + carrier.next())
                            - tabulated.process(audio + carrierAgain.next())));
@@ -1558,7 +1561,7 @@ TEST_CASE("but on real signals both are limited by the reversals",
     double worst = 0.0;
     for (int i = 0; i < 48000; ++i)
     {
-        const double field = 2.0e5 * std::sin(2.0 * M_PI * 220.0 * i / 48000.0);
+        const double field = 2.0e5 * std::sin(2.0 * kPi * 220.0 * i / 48000.0);
         worst = std::max(worst, std::abs(rk4.process(field) - newton.process(field)));
     }
 
@@ -1647,7 +1650,7 @@ TEST_CASE("RK2 matches RK4 at a modest field step", "[hysteresis][rk2]")
     double worst = 0.0;
     for (int i = 0; i < 48000; ++i)
     {
-        const double field = 2.0e5 * std::sin(2.0 * M_PI * 220.0 * i / 48000.0);
+        const double field = 2.0e5 * std::sin(2.0 * kPi * 220.0 * i / 48000.0);
         worst = std::max(worst, std::abs(rk2.process(field) - rk4.process(field)));
     }
 

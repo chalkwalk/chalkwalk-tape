@@ -70,7 +70,9 @@ namespace chalkwalk::tape
                 return false;
             }
 
-            increment_ = 2.0 * M_PI * frequencyHz / sampleRate;
+            // Not M_PI, which MSVC lacks without `_USE_MATH_DEFINES`.
+            constexpr double kPi = 3.14159265358979323846;
+            increment_ = 2.0 * kPi * frequencyHz / sampleRate;
             stepCos_ = std::cos(increment_);
             stepSin_ = std::sin(increment_);
             reset();

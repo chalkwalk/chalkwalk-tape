@@ -53,6 +53,8 @@
 //
 // JUCE-free by design. Promotion target: chalkwalk-tape.
 
+#include <chalkwalk/dsp/Pi.h>
+
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -63,11 +65,11 @@ namespace chalkwalk::tape
     // 0, 1/16, 1/8, 1/4, 3/8, 1/2.
     inline constexpr std::array<double, 6> kHeadLengthRoundings = {
         0.0,
-        M_PI / 16.0,
-        M_PI / 8.0,
-        M_PI / 4.0,
-        3.0 * M_PI / 8.0,
-        M_PI / 2.0,
+        dsp::kPi / 16.0,
+        dsp::kPi / 8.0,
+        dsp::kPi / 4.0,
+        3.0 * dsp::kPi / 8.0,
+        dsp::kPi / 2.0,
     };
 
     inline constexpr int kHeadLengthRows = 100;      // theta = 0.1 .. 10.0
@@ -242,7 +244,7 @@ namespace chalkwalk::tape
     {
         if (waveNum <= 0.0 || faceLengthMetres <= 0.0)
             return kHeadLengthLossFactor[0][0];   // the longest wavelength we have
-        const double lambda = 2.0 * M_PI / waveNum;
+        const double lambda = 2.0 * dsp::kPi / waveNum;
         return headLengthLossFactor(rounding, faceLengthMetres / lambda);
     }
 }

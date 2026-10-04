@@ -22,6 +22,9 @@
 #include <array>
 #include <cmath>
 #include <vector>
+#include <chalkwalk/dsp/Pi.h>
+
+using chalkwalk::dsp::kPi;   // not M_PI, which MSVC lacks
 
 namespace tape = chalkwalk::tape;
 
@@ -36,7 +39,7 @@ namespace
     {
         const double hz = 500.0 * static_cast<double>(lane + 1);
         const double phase = 0.37 * static_cast<double>(lane);
-        return amplitude * std::sin(2.0 * M_PI * hz * n / kRate + phase);
+        return amplitude * std::sin(2.0 * kPi * hz * n / kRate + phase);
     }
 }
 

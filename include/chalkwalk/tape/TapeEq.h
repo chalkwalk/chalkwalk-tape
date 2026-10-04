@@ -36,6 +36,8 @@
 //
 // JUCE-free by design. Promotion target: chalkwalk-tape.
 
+#include <chalkwalk/dsp/Pi.h>
+
 #include <chalkwalk/tape/LossEffects.h>
 
 #include <algorithm>
@@ -225,7 +227,7 @@ namespace chalkwalk::tape
             double m = 1.0;
             if (curve.lowSeconds > 0.0)
             {
-                const double corner = 1.0 / (2.0 * M_PI * curve.lowSeconds);
+                const double corner = 1.0 / (2.0 * dsp::kPi * curve.lowSeconds);
                 m *= f / std::sqrt(f * f + corner * corner);
             }
             // A ZERO, NOT A POLE, and this is the thing to get right. The
@@ -241,7 +243,7 @@ namespace chalkwalk::tape
             // 0.02 dB at every frequency and every speed.
             if (curve.highSeconds > 0.0)
             {
-                const double corner = 1.0 / (2.0 * M_PI * curve.highSeconds);
+                const double corner = 1.0 / (2.0 * dsp::kPi * curve.highSeconds);
                 m *= std::sqrt(1.0 + (f / corner) * (f / corner));
             }
             return m;
@@ -289,13 +291,13 @@ namespace chalkwalk::tape
             if (bypass_)
                 return;
 
-            const double fc = 1.0 / (2.0 * M_PI * lowSeconds);
+            const double fc = 1.0 / (2.0 * dsp::kPi * lowSeconds);
             const double flo = fc * std::pow(10.0, -std::abs(maxBoostDb) / 20.0);
 
             // Reproduce is `(s + wlo) / (s + wc)`: unity well above the corner,
             // and `wlo / wc` below it. Record is the same section inverted.
-            const double wc = 2.0 * M_PI * fc;
-            const double wlo = 2.0 * M_PI * flo;
+            const double wc = 2.0 * dsp::kPi * fc;
+            const double wlo = 2.0 * dsp::kPi * flo;
             const double zero = record ? wc : wlo;
             const double pole = record ? wlo : wc;
 
