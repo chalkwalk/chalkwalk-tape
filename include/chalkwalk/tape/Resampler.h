@@ -215,7 +215,7 @@ namespace chalkwalk::tape
             int ph = static_cast<int>(frac * kPhases + 0.5);
             if (ph < 0) ph = 0;
             if (ph > kPhases) ph = kPhases;
-            return { b.table.data() + static_cast<std::size_t>(ph) * (2 * b.half),
+            return { b.table.data() + static_cast<std::size_t>(ph) * static_cast<std::size_t>(2 * b.half),
                      2 * b.half, b.half,
                      static_cast<float>(std::min(std::abs(rate), b.maxRate)) };
         }
@@ -235,7 +235,7 @@ namespace chalkwalk::tape
             if (ph < 0) ph = 0;
             if (ph > kPhases) ph = kPhases;
 
-            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * (2 * b.half);
+            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * static_cast<std::size_t>(2 * b.half);
             float acc = 0.0f;
             for (int i = 0; i < 2 * b.half; ++i)
             {
@@ -263,7 +263,7 @@ namespace chalkwalk::tape
             if (ph < 0) ph = 0;
             if (ph > kPhases) ph = kPhases;
 
-            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * (2 * b.half);
+            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * static_cast<std::size_t>(2 * b.half);
             float acc = 0.0f;
             for (int i = 0; i < 2 * b.half; ++i)
             {
@@ -304,7 +304,7 @@ namespace chalkwalk::tape
             if (ph < 0) ph = 0;
             if (ph > kPhases) ph = kPhases;
 
-            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * (2 * b.half);
+            const float* tab = b.table.data() + static_cast<std::size_t>(ph) * static_cast<std::size_t>(2 * b.half);
             for (int i = 0; i < 2 * b.half; ++i)
             {
                 int k = (base - (b.half - 1) + i) % len;
@@ -394,7 +394,7 @@ namespace chalkwalk::tape
                     }
                     // Normalise the phase to unit DC gain.
                     const double inv = (std::abs(sum) > 1.0e-12) ? 1.0 / sum : 1.0;
-                    float* dst = b.table.data() + static_cast<std::size_t>(ph) * taps;
+                    float* dst = b.table.data() + static_cast<std::size_t>(ph) * static_cast<std::size_t>(taps);
                     for (int i = 0; i < taps; ++i)
                         dst[i] = static_cast<float>(row[static_cast<std::size_t>(i)] * inv);
                 }
